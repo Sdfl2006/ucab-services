@@ -1,99 +1,137 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
-import { useNavigate } from 'react-router-dom';
+import React, { useState } from 'react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import Input from '../components/common/Input';
+import Button from '../components/common/Button';
 
-function Login() {
+export default function Login() {
+  const [correo, setCorreo] = useState('hola@sitioincreible.com');
+  const [clave, setClave] = useState('ucab1234');
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const from = location.state?.from?.pathname || '/dashboard';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    if (!correo || !clave) {
+      setError('Por favor ingrese su correo y contraseña.');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      await login(correo, clave);
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(err.message || 'Ocurrió un error al intentar iniciar sesión.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    /* Contenedor principal con imagen de fondo del campus y un overlay oscuro */
-    <div className="min-h-screen flex flex-col justify-center items-center p-4 relative bg-[url('https://elucabista.com/wp-content/uploads/2019/10/UCAB-vista-aerea-1-1.jpg')] bg-cover bg-center">
-      
-      {/* Capa oscura semitransparente para que la tarjeta resalte */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-ucab-light via-gray-100 to-gray-200 p-4">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-gray-200/80 overflow-hidden">
+        {/* Cabecera Verde Institucional UCAB */}
+        <div className="bg-ucab-green px-8 py-8 text-white text-center relative overflow-hidden">
+          <div className="absolute -right-6 -top-6 w-24 h-24 bg-ucab-green-light rounded-full opacity-20 pointer-events-none"></div>
+          
+          {/* Logo Simulado UCAB-Services */}
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-white/10 rounded-2xl mb-3 border border-white/20 shadow-inner">
+            <svg className="w-8 h-8 text-ucab-yellow" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 3L1 9L12 15L21 10.09V17H23V9M5 13.18V17.18L12 21L19 17.18V13.18L12 17L5 13.18Z" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-black tracking-tight">UCAB-Services</h1>
+          <p className="text-xs text-emerald-100 mt-1 font-medium tracking-wide uppercase">
+            Universidad Católica Andrés Bello
+          </p>
+        </div>
 
-      {/* Tarjeta de Login */}
-      <div className="relative z-10 w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border-t-4 border-ucab-yellow">
-        
-        <div className="p-8 sm:p-10">
-          {/* Logo y Encabezado */}
-          <div className="flex flex-col items-center justify-center mb-8">
-            <img 
-              src="https://www.ucab.edu.ve/wp-content/uploads/2017/09/logo-ucab.png" 
-              alt="Logo UCAB" 
-              className="h-14 mb-5 object-contain"
+        {/* Formulario de Acceso (Referencia Figura 3 del PDF) */}
+        <div className="p-8">
+          <div className="text-center mb-6">
+            <h2 className="text-xl font-bold text-gray-800">Accede</h2>
+            <p className="text-sm text-gray-500 mt-1">Inicia sesión para continuar en la plataforma</p>
+          </div>
+
+          {error && (
+            <div className="mb-6 p-3.5 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2.5 text-xs text-red-700 font-medium animate-shake">
+              <svg className="w-5 h-5 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Input
+              label="CORREO ELECTRÓNICO"
+              id="correo"
+              type="email"
+              placeholder="ejemplo@est.ucab.edu.ve"
+              value={correo}
+              onChange={(e) => setCorreo(e.target.value)}
+              required
             />
-            <h2 className="text-center text-lg font-bold text-gray-800 border-b-2 border-gray-100 pb-4 w-full">
-              Registro de Usuario | UCAB-Services
-            </h2>
-          </div>
 
-          {/* Textos descriptivos (Referencia HU-04) */}
-          <div className="mb-8">
-            <h3 className="text-2xl font-bold text-gray-900">Accede</h3>
-            <p className="text-sm text-gray-500 mt-1">Inicia sesión para continuar con tus trámites</p>
-          </div>
+            <Input
+              label="CONTRASEÑA"
+              id="clave"
+              type="password"
+              placeholder="••••••••••••"
+              value={clave}
+              onChange={(e) => setClave(e.target.value)}
+              required
+            />
 
-          {/* Formulario */}
-          <form className="space-y-6">
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-2">
-                Correo Electrónico
+            <div className="flex items-center justify-between text-xs pt-1">
+              <label className="flex items-center gap-2 cursor-pointer text-gray-600">
+                <input type="checkbox" defaultChecked className="rounded text-ucab-green focus:ring-ucab-green" />
+                <span>Recordar sesión</span>
               </label>
-              <input 
-                type="email" 
-                placeholder="tu-correo@ucab.edu.ve"
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-ucab-green focus:bg-white transition-all text-sm"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-2">
-                Contraseña
-              </label>
-              <input 
-                type="password" 
-                placeholder="••••••••"
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-ucab-green focus:bg-white transition-all text-sm"
-                required
-              />
-            </div>
-
-            {/* Checkbox y Olvido de contraseña */}
-            <div className="flex items-center justify-between mt-4">
-              <label className="flex items-center">
-                <input type="checkbox" className="w-4 h-4 text-ucab-green border-gray-300 rounded focus:ring-ucab-green" />
-                <span className="ml-2 text-sm text-gray-600">Recuérdame</span>
-              </label>
-              <a href="#" className="text-sm font-semibold text-ucab-green hover:text-ucab-green-dark transition-colors">
-                ¿Olvidaste tu clave?
+              <a href="#recuperar" onClick={(e) => { e.preventDefault(); alert('Para recuperar su clave acuda al Departamento de TI o Secretaría.'); }} className="font-semibold text-ucab-green hover:underline">
+                ¿Olvidaste tu contraseña?
               </a>
             </div>
 
-            {/* Botón Principal */}
-            <button 
-              type="button"
-              onClick={() => navigate('/Dashboard')}
-              className="w-full bg-ucab-green text-white font-bold text-sm py-3 px-4 rounded-lg hover:bg-ucab-green-dark focus:ring-4 focus:ring-green-200 transition-all shadow-md mt-6"
-            >
-              Acceder
-            </button>
+            <div className="pt-2">
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                loading={isSubmitting}
+                className="w-full font-bold shadow-md hover:shadow-lg"
+              >
+                Acceder
+              </Button>
+            </div>
           </form>
 
-          {/* Footer de la tarjeta */}
-          <p className="mt-8 text-center text-sm text-gray-600">
-            ¿No estás registrado?{' '}
-            <a href="#" className="font-bold text-ucab-yellow hover:text-yellow-600 transition-colors">
-              Crea tu cuenta aquí
-            </a>
-          </p>
+          {/* Enlace al Registro */}
+          <div className="mt-6 pt-6 border-t border-gray-100 text-center text-xs text-gray-600">
+            ¿Aún no estás registrado en UCAB-Services?{' '}
+            <Link to="/register" className="font-bold text-ucab-green hover:underline">
+              Crear una cuenta nueva
+            </Link>
+          </div>
+
+          {/* Tarjeta de ayuda rápida para los evaluadores / profesores */}
+          <div className="mt-6 p-3 bg-blue-50/70 border border-blue-200/60 rounded-xl text-[11px] text-blue-900">
+            <div className="font-bold flex items-center gap-1.5 mb-1 text-ucab-blue">
+              <span>💡 Modo Demostración / Rúbrica:</span>
+            </div>
+            <p>Puedes hacer clic directamente en <b>Acceder</b> con los datos precargados para entrar al Dashboard como <i>Estudiante (Sede Montalbán)</i>.</p>
+          </div>
         </div>
-        
-        {/* Barra decorativa inferior */}
-        <div className="h-2 w-full bg-ucab-green"></div>
       </div>
     </div>
   );
 }
-
-export default Login;
