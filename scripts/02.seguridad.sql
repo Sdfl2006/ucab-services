@@ -12,9 +12,14 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ucab_admin;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ucab_admin;
 
 -- 3. Permisos para el Cajero (Solo gestiona pagos, facturas y consumos)
-GRANT SELECT, INSERT, UPDATE ON Factura, Pago, Folio_Consumo, Solicitud_Servicio TO ucab_cajero;
+GRANT SELECT, INSERT, UPDATE ON Factura, Pago, Pago_Presencial, Pago_Digital, Pago_Zelle, 
+    Pago_Criptomoneda, Pago_Tarjeta, Pago_Movil, Pago_Efectivo, Pago_TAI, 
+    Folio_Consumo, Linea_Cargo, Solicitud_Servicio TO ucab_cajero;
+
 -- El cajero necesita poder leer los servicios para saber qué está cobrando
 GRANT SELECT ON Servicio, Cargos_adicionales, Miembro_comunidad TO ucab_cajero;
 
 -- 4. Permisos para el Usuario Web (Solo lectura de catálogos, no puede borrar ni alterar)
-GRANT SELECT ON Sede, Edificacion, Espacio_fisico, Categoria_servicio, Entidad_prestadora, Servicio, Vacante TO ucab_usuario_web;
+GRANT SELECT ON Sede, Edificacion, Espacio_fisico, Categoria_servicio, Entidad_prestadora, 
+    Interna, Externa, Servicio, Tarifa, Requisito, Servicio_Requisito, Servicio_Sede, 
+    Vacante TO ucab_usuario_web;

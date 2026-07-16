@@ -14,7 +14,7 @@ BEGIN
     -- Buscamos el saldo actual de la factura a la que se le está haciendo el pago
     SELECT saldo INTO saldo_actual 
     FROM Factura 
-    WHERE nro_control = NEW.nro_control;
+    WHERE nro_control = NEW.nro_control_factura;
 
     -- SEGURO: Validamos que el pago no sea mayor al saldo deudor
     IF NEW.monto > saldo_actual THEN
@@ -28,7 +28,7 @@ BEGIN
                     WHEN (saldo - NEW.monto) = 0 THEN 'Pagada' 
                     ELSE 'Pago_Parcial' 
                   END
-    WHERE nro_control = NEW.nro_control;
+    WHERE nro_control = NEW.nro_control_factura;
 
     RETURN NEW;
 END;
@@ -41,7 +41,7 @@ FOR EACH ROW
 EXECUTE FUNCTION fn_procesar_pago_factura();
 
 -- ----------------------------------------------------------------------------
--- 2. TRIGGER: AUDITORÍA DE TIEMPOS EN TRÁMITES (Tu lógica original restaurada)
+-- 2. TRIGGER: AUDITORÍA DE TIEMPOS EN TRÁMITES
 -- ----------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION registrar_fin_paso()
