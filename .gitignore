@@ -1,0 +1,6 @@
+# Dependencias Generales
+node_modules/
+
+# Archivos del sistema
+.DS_Store
+*.log
