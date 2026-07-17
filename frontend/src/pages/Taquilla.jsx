@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import paymentService, { METODOS_TAQUILLA } from '../services/paymentService';
 import Card from '../components/common/Card';
 import Button from '../components/common/Button';
 import Input from '../components/common/Input';
+import DataTable from '../components/table/DataTable';
+import Badge from '../components/common/Badge';
 import { TASA_BCV } from '../services/mockData';
 
 // Contrato real (paymentController.js): estos 4 métodos son exclusivos de
@@ -83,6 +85,11 @@ function CampoDinamico({ campo, valor, onChange }) {
 export default function Taquilla() {
   const { hasAnyRole } = useAuth();
 
+  // --- ESTADOS PARA AUDITORÍA TAI ---
+  const [recargas, setRecargas] = useState([]);
+  const [cargandoRecargas, setCargandoRecargas] = useState(false);
+
+  // --- ESTADOS PARA COBRO DE FACTURAS ---
   const [nroControlFactura, setNroControlFactura] = useState('');
   const [monto, setMonto] = useState('');
   const [metodo, setMetodo] = useState(METODOS_TAQUILLA.TARJETA);
@@ -91,9 +98,39 @@ export default function Taquilla() {
   const [resultado, setResultado] = useState(null);
   const [error, setError] = useState(null);
 
-  // Esta pantalla es exclusiva de caja (mismo criterio que el backend);
-  // si alguien sin el rol llega por URL directa, lo mandamos al dashboard
-  // en vez de mostrar un formulario que el backend rechazará con 403.
+  // Cargar las recargas pendientes al iniciar si tiene el rol
+  useEffect(() => {
+    if (hasAnyRole('Admin', 'Personal_Administrativo')) {
+      cargarRecargasPendientes();
+    }
+  }, [hasAnyRole]);
+
+  const cargarRecargasPendientes = async () => {
+    setCargandoRecargas(true);
+    try {
+      const data = await paymentService.getRecargasPendientes();
+      setRecargas(data || []);
+    } catch (error) {
+      console.error("Error cargando recargas:", error);
+    } finally {
+      setCargandoRecargas(false);
+    }
+  };
+
+  const handleAprobarRecarga = async (idMovimiento, solicitante) => {
+    const confirmar = window.confirm(`¿Confirmas que la transferencia de ${solicitante} ya está reflejada en la cuenta del banco de la universidad?`);
+    if (!confirmar) return;
+    
+    try {
+      await paymentService.aprobarRecarga(idMovimiento);
+      alert('Recarga aprobada exitosamente. El saldo virtual ha sido liberado.');
+      cargarRecargasPendientes(); // Refrescar la tabla
+    } catch (error) {
+      alert('Error al aprobar: ' + (error?.friendlyMessage || error?.message));
+    }
+  };
+
+  // Redirección de seguridad
   if (!hasAnyRole('Admin', 'Personal_Administrativo')) {
     return <Navigate to="/dashboard" replace />;
   }
@@ -108,6 +145,7 @@ export default function Taquilla() {
   }
 
   const esMonedaNacional = metodo === METODOS_TAQUILLA.PAGO_MOVIL || (metodo === METODOS_TAQUILLA.EFECTIVO && datosMetodo.moneda_curso === 'bolívares');
+  
   async function handleSubmit(e) {
     e.preventDefault();
     setEnviando(true);
@@ -117,7 +155,6 @@ export default function Taquilla() {
     try {
       const ejecutar = SERVICIO_POR_METODO[metodo];
       
-      // Si el cajero anotó Bolívares (Pago Móvil o Efectivo Bs), lo convertimos a Dólares
       let montoBaseDatos = Number(monto);
       if (esMonedaNacional) {
         montoBaseDatos = montoBaseDatos / TASA_BCV;
@@ -139,14 +176,104 @@ export default function Taquilla() {
     }
   }
 
+  // --- COLUMNAS DE LA TABLA TAI ---
+  const columnasRecargas = [
+    { 
+      key: 'solicitante', 
+      label: 'Estudiante', 
+      sortable: true,
+      render: (row) => (
+        <div>
+          <p className="font-bold text-gray-900">{row.solicitante}</p>
+          <span className="text-[11px] text-gray-500 font-mono">CI: {row.cedula_miembro}</span>
+        </div>
+      )
+    },
+    { 
+      key: 'referencia_bancaria', 
+      label: 'Origen y Referencia',
+      render: (row) => (
+        <div className="flex flex-col">
+           <span className="font-bold text-xs text-gray-800 uppercase">{row.metodo_fondeo || 'Desconocido'}</span>
+           <span className="font-mono text-xs text-gray-500">Ref: {row.referencia_bancaria}</span>
+        </div>
+      )
+    },
+    { 
+      key: 'monto', 
+      label: 'Monto a Fondear', 
+      sortable: true,
+      render: (row) => <span className="font-black text-green-700">${Number(row.monto).toFixed(2)} USD</span>
+    },
+    { 
+      key: 'fecha_hora', 
+      label: 'Fecha', 
+      sortable: true,
+      render: (row) => <span className="text-xs text-gray-600">{new Date(row.fecha_hora).toLocaleString('es-VE')}</span>
+    },
+    { 
+      key: 'estatus', 
+      label: 'Estatus',
+      render: () => <Badge label="EN REVISIÓN" status="warning" size="sm" />
+    },
+    { 
+      key: 'acciones', 
+      label: 'Auditoría', 
+      sortable: false,
+      render: (row) => (
+        <Button 
+          size="sm" 
+          variant="primary" 
+          onClick={() => handleAprobarRecarga(row.id_movimiento, row.solicitante)}
+        >
+          Aprobar
+        </Button>
+      )
+    }
+  ];
+
   return (
-    <div className="max-w-2xl mx-auto space-y-6 animate-fadeIn">
+    <div className="max-w-5xl mx-auto space-y-8 animate-fadeIn">
+      {/* Encabezado Principal */}
       <div>
-        <h1 className="text-xl sm:text-2xl font-black text-ucab-green">Taquilla de Pagos</h1>
-        <p className="text-sm text-gray-500 mt-1">Registra la liquidación presencial de una factura con el método presentado por el usuario.</p>
+        <h1 className="text-xl sm:text-2xl font-black text-ucab-green">Caja y Taquilla</h1>
+        <p className="text-sm text-gray-500 mt-1">Módulo unificado de gestión de cobros presenciales y auditoría de transferencias.</p>
       </div>
 
+      {/* SECCIÓN 1: Auditoría de Recargas TAI */}
       <Card>
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-5 border-b border-gray-100 pb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">Auditoría de Recargas TAI</h2>
+            <p className="text-xs text-gray-500 mt-1">Valide las transferencias enviadas por los estudiantes antes de liberar su saldo virtual.</p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={cargarRecargasPendientes} loading={cargandoRecargas}>
+            ↻ Refrescar Lista
+          </Button>
+        </div>
+
+        {cargandoRecargas ? (
+          <div className="p-6 bg-gray-50 text-center text-sm font-medium text-gray-500 rounded-xl border border-gray-100">
+            Buscando solicitudes pendientes...
+          </div>
+        ) : (
+          <DataTable
+            columns={columnasRecargas}
+            data={recargas}
+            searchableColumns={['solicitante', 'cedula_miembro', 'referencia_bancaria']}
+            initialPageSize={5}
+            emptyMessage="No hay recargas pendientes por auditar en este momento."
+          />
+        )}
+      </Card>
+
+      {/* SECCIÓN 2: Procesamiento de Facturas Presenciales (Original) */}
+      <Card>
+        <div className="mb-5 pb-4 border-b border-gray-100">
+          <h2 className="text-lg font-bold text-gray-800">Procesar Factura Presencial</h2>
+          <p className="text-xs text-gray-500 mt-1">Registra la liquidación de una deuda utilizando el método de pago presentado en la taquilla.</p>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input

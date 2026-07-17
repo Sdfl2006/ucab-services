@@ -12,6 +12,7 @@ const {
 } = require('../controllers/paymentController');
 
 const { authenticateToken, authorizeRoles } = require('../middlewares/authMiddleware');
+const paymentController = require('../controllers/paymentController');
 
 router.use(authenticateToken); // Seguridad global con JWT
 
@@ -25,7 +26,11 @@ router.post('/tarjeta', authorizeRoles('Admin', 'Personal_Administrativo'), proc
 router.post('/pago-movil', processMobilePayment);
 router.post('/efectivo', authorizeRoles('Admin', 'Personal_Administrativo'), processCashPayment);
 router.post('/tai', authorizeRoles('Admin', 'Personal_Administrativo'), processTAIPayment);
-
+router.post('/tai/recarga', paymentController.solicitarRecargaTAI);
+router.get('/tai/recargas-pendientes', authorizeRoles('Admin', 'Personal_Administrativo'), paymentController.getRecargasPendientes);
+router.put('/tai/recarga/:id_movimiento/aprobar', authorizeRoles('Admin', 'Personal_Administrativo'), paymentController.aprobarRecargaTAI);
+router.post('/tai/online', paymentController.processOnlineTAIPayment);
+router.get('/tai/saldo', paymentController.getSaldoTAI);
 // HU-34: Cierre masivo mensual (exclusivo de Admin / Finanzas)
 router.post('/cierre-masivo', authorizeRoles('Admin', 'Personal_Administrativo'), monthlyMassClose);
 

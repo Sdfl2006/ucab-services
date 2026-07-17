@@ -5,6 +5,7 @@ import paymentService from '../services/paymentService';
 import DataTable from '../components/table/DataTable';
 import Badge from '../components/common/Badge';
 import Button from '../components/common/Button';
+import Input from '../components/common/Input';
 
 export default function PaymentsHistory() {
   const { user } = useAuth();
@@ -12,6 +13,21 @@ export default function PaymentsHistory() {
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const [mostrandoRecarga, setMostrandoRecarga] = useState(false);
+  const [datosRecarga, setDatosRecarga] = useState({ monto: '', referencia_bancaria: '', metodo_fondeo: '' });
+  const [saldoReal, setSaldoReal] = useState(0); // NUEVO ESTADO
+
+  useEffect(() => {
+    const fetchSaldo = async () => {
+      try {
+        const saldo = await paymentService.getSaldoTAI();
+        setSaldoReal(saldo);
+      } catch (error) {
+        console.error("No se pudo cargar el saldo TAI");
+      }
+    };
+    fetchSaldo();
+  }, []);
 
   useEffect(() => {
     const cargarPagos = async () => {
@@ -86,13 +102,12 @@ export default function PaymentsHistory() {
         </div>
       ),
     },
-      {
+    {
       key: 'montoUsd',
       label: 'Deuda Pendiente',
       sortable: true,
       render: (row) => (
         <div>
-          {/* Mostramos el SALDO restante, no el total original */}
           <p className="font-black text-gray-900">${Number(row.montoUsd).toFixed(2)} USD</p>
           <p className="text-[11px] text-gray-500">Total servicio: ${(row.montoUsd).toFixed(2)}</p>
         </div>
@@ -119,10 +134,8 @@ export default function PaymentsHistory() {
             variant={isPaid ? 'secondary' : 'primary'}
             onClick={() => {
               if (isPaid) {
-                // Si ya pagó, va a ver su comprobante
                 navigate(`/factura/comprobante?nroControl=${encodeURIComponent(row.nroControl)}`, { state: { invoice: row } });
               } else {
-                // Si debe dinero, armamos el carrito con el SALDO RESTANTE y lo mandamos a pagar
                 const pendingOrder = {
                   nroControl: row.nroControl,
                   nroSolicitud: row.id,
@@ -147,6 +160,8 @@ export default function PaymentsHistory() {
 
   return (
     <div className="space-y-6 animate-fadeIn">
+      
+      {/* Contenedor del encabezado */}
       <div className="bg-gradient-to-r from-gray-900 via-ucab-blue to-ucab-green p-6 sm:p-8 rounded-3xl text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-6">
         <div className="space-y-1">
           <span className="text-xs font-bold text-ucab-yellow uppercase tracking-widest">Billetera Académica Inteligente (TAI)</span>
@@ -156,15 +171,96 @@ export default function PaymentsHistory() {
           </p>
         </div>
 
-        <div className="bg-white/10 p-5 rounded-2xl border border-white/20 flex items-center gap-4 shrink-0 w-full sm:w-auto justify-between">
-          <div>
-            <span className="text-xs text-gray-300 font-semibold block">SALDO VIRTUAL TAI:</span>
-            <span className="text-2xl font-black text-white">${Number(user?.saldo || 0).toFixed(2)} USD</span>
-            <p className="text-[10px] text-emerald-200">~ Bs. {Math.round(Number(user?.saldo || 0) * 1).toLocaleString('es-VE')}</p>
+        {/* WIDGET DE RECARGA MEJORADO */}
+        <div className="bg-black/20 p-5 md:p-6 rounded-2xl border border-white/20 flex flex-col gap-4 shrink-0 w-full sm:w-80 md:w-96 shadow-inner">
+          <div className="flex justify-between items-center gap-4">
+            <div>
+              <span className="text-[10px] text-gray-300 font-bold tracking-wider block mb-1">SALDO VIRTUAL TAI</span>
+              <span className="text-3xl font-black text-white leading-none">${Number(saldoReal).toFixed(2)} USD</span>            </div>
+            <Button 
+              size="sm" 
+              variant={mostrandoRecarga ? 'secondary' : 'accent'} 
+              onClick={() => setMostrandoRecarga(!mostrandoRecarga)}
+            >
+              {mostrandoRecarga ? 'Cancelar' : '+ Recargar'}
+            </Button>
           </div>
-          <Button size="sm" variant="accent" onClick={() => alert('Para recargar su Billetera TAI acerque su carnet a las taquillas de caja o transfiera por Zelle/Pago Móvil.') }>
-            + Recargar
-          </Button>
+          
+          {mostrandoRecarga && (
+            <div className="mt-2 pt-4 border-t border-white/10 space-y-4 animate-fadeIn">
+              <p className="text-xs text-gray-300 leading-snug">
+                Para fondear tu cuenta, realiza una transferencia a las cuentas de la universidad y registra los datos del comprobante aquí.
+              </p>
+              
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[11px] text-gray-300 font-semibold mb-1 block uppercase tracking-wide">
+                    Monto Transferido (USD)
+                  </label>
+                  <input 
+                    type="number"
+                    placeholder="Ej. 50.00"
+                    className="w-full bg-white text-gray-900 border-0 rounded-lg px-3 py-2 text-sm placeholder-gray-400 focus:ring-2 focus:ring-ucab-green outline-none font-medium"
+                    value={datosRecarga.monto} 
+                    onChange={(e) => setDatosRecarga({...datosRecarga, monto: e.target.value})} 
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-[11px] text-gray-300 font-semibold mb-1 block uppercase tracking-wide">
+                    Nro. de Referencia o TXID
+                  </label>
+                  <input 
+                    type="text"
+                    placeholder="Últimos 6 dígitos del voucher"
+                    className="w-full bg-white text-gray-900 border-0 rounded-lg px-3 py-2 text-sm placeholder-gray-400 focus:ring-2 focus:ring-ucab-green outline-none font-medium"
+                    value={datosRecarga.referencia_bancaria} 
+                    onChange={(e) => setDatosRecarga({...datosRecarga, referencia_bancaria: e.target.value})} 
+                  />
+                </div>
+
+                {/* AQUÍ VA EL SELECTOR DE MÉTODO DE FONDEO */}
+                <div>
+                  <label className="text-[11px] text-gray-300 font-semibold mb-1 block uppercase tracking-wide">
+                    Método de Transferencia
+                  </label>
+                  <select 
+                    className="w-full bg-white text-gray-900 border-0 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-ucab-green outline-none font-medium"
+                    value={datosRecarga.metodo_fondeo}
+                    onChange={(e) => setDatosRecarga({...datosRecarga, metodo_fondeo: e.target.value})}
+                  >
+                    <option value="" disabled>Seleccione un método...</option>
+                    <option value="Zelle">Zelle</option>
+                    <option value="Pago Móvil">Pago Móvil</option>
+                    <option value="Transferencia Nacional">Transferencia Nacional</option>
+                  </select>
+                </div>
+
+                <Button 
+                  variant="primary" 
+                  size="sm" 
+                  className="w-full mt-2 font-bold shadow-md"
+                  onClick={async () => {
+                    // SE ACTUALIZÓ LA VALIDACIÓN PARA INCLUIR EL MÉTODO
+                    if (!datosRecarga.monto || !datosRecarga.referencia_bancaria || !datosRecarga.metodo_fondeo) {
+                      return alert('Por favor, ingresa el monto, la referencia y el método de pago.');
+                    }
+                    try {
+                      await paymentService.solicitarRecargaTAI(datosRecarga);
+                      alert('Recarga enviada. Un cajero la validará pronto.');
+                      setMostrandoRecarga(false);
+                      // SE LIMPIA TAMBIÉN EL MÉTODO AL TERMINAR
+                      setDatosRecarga({ monto: '', referencia_bancaria: '', metodo_fondeo: '' }); 
+                    } catch(e) { 
+                      alert(e?.friendlyMessage || e?.message || 'Ocurrió un error al solicitar la recarga.'); 
+                    }
+                  }}
+                >
+                  Registrar Recarga
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

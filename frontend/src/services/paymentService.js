@@ -42,6 +42,26 @@ async function pagarTAI(payload) {
   return request('/tai', payload);
 }
 
+const solicitarRecargaTAI = async (payload) => {
+  const response = await api.post(`${BASE_URL}/tai/recarga`, payload);
+  return response.data;
+};
+
+const getRecargasPendientes = async () => {
+  const response = await api.get(`${BASE_URL}/tai/recargas-pendientes`);
+  return response.data?.data || response.data;
+};
+
+const aprobarRecarga = async (idMovimiento) => {
+  const response = await api.put(`${BASE_URL}/tai/recarga/${idMovimiento}/aprobar`);
+  return response.data;
+};
+
+const getSaldoTAI = async () => {
+  const response = await api.get(`${BASE_URL}/tai/saldo`);
+  return response.data?.saldo || 0;
+};
+
 async function getInvoices() {
   try {
     const response = await api.get(`${BASE_URL}/facturas`);
@@ -60,6 +80,11 @@ async function generateInvoice(payload) {
   }
 }
 
+const pagarTAIOnline = async (payload) => {
+  const response = await api.post(`${BASE_URL}/tai/online`, payload);
+  return response.data;
+};
+
 export default {
   pagarTarjeta,
   pagarPagoMovil,
@@ -67,4 +92,9 @@ export default {
   pagarTAI,
   getInvoices,
   generateInvoice,
+  solicitarRecargaTAI,
+  getRecargasPendientes,
+  aprobarRecarga,
+  getSaldoTAI,
+  pagarTAIOnline,
 };

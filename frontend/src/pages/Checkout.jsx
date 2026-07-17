@@ -39,38 +39,37 @@ export default function Checkout() {
   const handleFinalizarPago = async (e) => {
     e.preventDefault();
     setError('');
-
     if (!terminosAceptados) {
-      setError('Debe aceptar los términos y condiciones de uso de las instalaciones para continuar.');
+      setError('Debe aceptar los términos y condiciones.');
       return;
     }
-
     setIsProcessing(true);
     try {
       let numeroControl = orden.nroControl;
-
-      // 1. Si es una solicitud nueva (no venimos del botón "Pagar Saldo"), generamos la factura
       if (!numeroControl) {
         const invoicePayload = {
           nro_solicitud: orden?.nroSolicitud,
-          fecha_apertura: orden?.fechaCreacion, 
-          rif_corporativo: 'J-00012255-5',
-          razon_social_corporativa: 'Universidad Católica Andrés Bello',
+          fecha_apertura: orden?.fechaCreacion,
         };
         const resInvoice = await paymentService.generateInvoice(invoicePayload);
-        const invoiceData = resInvoice?.data ?? resInvoice;
-        numeroControl = invoiceData.nro_control;
+        numeroControl = resInvoice.nro_control;
       }
 
-      // 2. Registrar el PAGO REAL en backend
-      // CORRECCIÓN CLAVE: El backend evalúa la deuda en USD. Pasamos orden.montoUsd
-      await paymentService.pagarPagoMovil({
-        nro_control_factura: numeroControl,
-        monto: orden.montoUsd, // <-- ENVIAMOS EL MONTO EN LA MONEDA BASE
-        nro_telefono: '04141234567',
-        banco_origen: metodoPago === 'ZELLE' ? 'Zelle / Divisas' : 'Banca en Línea',
-        nro_referencia: referencia || '12345678'
-      });
+      // NUEVA LÓGICA DE PAGO
+      if (metodoPago === 'TAI') {
+        // Para TAI Online no enviamos referencia bancaria, solo la factura y el monto
+        await paymentService.pagarTAIOnline({
+          nro_control_factura: numeroControl,
+          monto: orden.montoUsd
+        });
+      } else {
+        // Tu lógica original de Pago Móvil / Zelle
+        await paymentService.pagarPagoMovil({
+          nro_control_factura: numeroControl,
+          monto: orden.montoUsd,
+          nro_referencia: referencia || '12345678'
+        });
+      }
 
       localStorage.removeItem('ucab_pending_order');
       navigate(`/factura/comprobante?nroControl=${numeroControl}`);
@@ -80,7 +79,7 @@ export default function Checkout() {
       setIsProcessing(false);
     }
   };
-
+  
   if (!orden) return null;
 
   return (

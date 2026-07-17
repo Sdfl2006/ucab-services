@@ -214,7 +214,7 @@ const registrarPagoRaiz = async (client, nro_control_factura, monto) => {
             SET estatus = CASE WHEN saldo <= 0 THEN 'Pagada' ELSE 'Pago_Parcial' END 
             WHERE nro_control = $1
         `, [nro_control_factura]);
-        
+
         return { nro_control_factura, fecha_pago };
     } catch (error) {
         // Atrapamos la excepción 'RAISE EXCEPTION' lanzada por el Trigger de DB
@@ -388,26 +388,52 @@ const processCashPayment = async (req, res, next) => {
  * @route   POST /api/v1/pagos/tai
  * @access  Private (Caja / Terminal POS)
  */
+// =======================================================================
+// PAGOS CON BILLETERA TAI Y RECARGAS
+// =======================================================================
+
 const processTAIPayment = async (req, res, next) => {
     const client = await pool.connect();
     try {
         const { nro_control_factura, monto, uid_chip, codigo_terminal_pos } = req.body;
         await client.query('BEGIN');
 
-        const { nro_control_factura: nro, fecha_pago } = await registrarPagoRaiz(client, nro_control_factura, monto);
+        // Validar y descontar saldo
+        const billeteraRes = await client.query(`
+            SELECT saldo_actual, cedula_miembro 
+            FROM Billetera_TAI 
+            WHERE saldo_actual >= $1 LIMIT 1; 
+        `, [monto]); 
 
+        if (billeteraRes.rows.length === 0) {
+             const error = new Error('Saldo insuficiente en la Billetera TAI o carnet no válido.');
+             error.statusCode = 400;
+             throw error;
+        }
+        
+        const cedula = billeteraRes.rows[0].cedula_miembro;
+
+        // Descontar
+        await client.query(`UPDATE Billetera_TAI SET saldo_actual = saldo_actual - $1 WHERE cedula_miembro = $2`, [monto, cedula]);
+        
+        // Registrar Movimiento de Consumo
+        await client.query(`
+            INSERT INTO Movimiento_TAI (cedula_miembro, tipo_movimiento, monto, estatus, referencia_bancaria)
+            VALUES ($1, 'CONSUMO', $2, 'aprobado', $3)
+        `, [cedula, monto, `FAC-${nro_control_factura}`]);
+
+        const { nro_control_factura: nro, fecha_pago } = await registrarPagoRaiz(client, nro_control_factura, monto);
         await client.query(`INSERT INTO Pago_Presencial (nro_control_factura, fecha_pago, tasa_bcv) VALUES ($1, $2, 1.0)`, [nro, fecha_pago]);
-        await client.query(
-            `INSERT INTO Pago_TAI (nro_control_factura, fecha_pago, uid_chip, codigo_terminal_pos)
-             VALUES ($1, $2, $3, $4)`,
-            [nro, fecha_pago, uid_chip, codigo_terminal_pos]
-        );
+        await client.query(`
+            INSERT INTO Pago_TAI (nro_control_factura, fecha_pago, uid_chip, codigo_terminal_pos)
+            VALUES ($1, $2, $3, $4)
+        `, [nro, fecha_pago, uid_chip, codigo_terminal_pos]);
 
         await client.query('COMMIT');
         const facActualizada = await pool.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1`, [nro]);
         res.status(201).json({
             success: true,
-            message: 'Cobro por carnet NFC (Billetera TAI) debitado exitosamente.',
+            message: 'Cobro por carnet NFC debitado exitosamente.',
             data: { metodo: 'Billetera TAI', uid_chip, factura_actualizada: facActualizada.rows[0] }
         });
     } catch (error) {
@@ -418,17 +444,98 @@ const processTAIPayment = async (req, res, next) => {
     }
 };
 
-/**
- * @desc    HU-34 & Foco Técnico: Cierre Masivo Mensual (Convierte folios abiertos en facturas)
- * @route   POST /api/v1/pagos/cierre-masivo
- * @access  Private (Admin / Finanzas)
- */
+const solicitarRecargaTAI = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const cedula = req.user.cedula;
+        const { monto, referencia_bancaria, metodo_fondeo } = req.body; 
+        
+        const metodosValidos = ['Zelle', 'Pago Móvil', 'Transferencia Nacional'];
+        if (!metodosValidos.includes(metodo_fondeo)) {
+            const error = new Error('Método de fondeo inválido.');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        await client.query('BEGIN');
+        
+        await client.query(`
+            INSERT INTO Billetera_TAI (cedula_miembro, saldo_actual) 
+            VALUES ($1, 0.00) ON CONFLICT DO NOTHING;
+        `, [cedula]);
+
+        const query = `
+            INSERT INTO Movimiento_TAI (cedula_miembro, tipo_movimiento, monto, referencia_bancaria, metodo_fondeo, estatus)
+            VALUES ($1, 'RECARGA', $2, $3, $4, 'en_revision') RETURNING *;
+        `;
+        const { rows } = await client.query(query, [cedula, monto, referencia_bancaria, metodo_fondeo]);
+        
+        await client.query('COMMIT');
+        res.status(201).json({ success: true, message: 'Recarga en revisión.', data: rows[0] });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
+const getRecargasPendientes = async (req, res, next) => {
+    try {
+        const query = `
+            SELECT m.id_movimiento, m.cedula_miembro, c.nombres || ' ' || c.apellidos AS solicitante, 
+                   m.monto, m.referencia_bancaria, m.metodo_fondeo, m.fecha_hora
+            FROM Movimiento_TAI m
+            JOIN Miembro_comunidad c ON m.cedula_miembro = c.cedula
+            WHERE m.tipo_movimiento = 'RECARGA' AND m.estatus = 'en_revision'
+            ORDER BY m.fecha_hora ASC;
+        `;
+        const { rows } = await pool.query(query);
+        res.status(200).json({ success: true, data: rows });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const aprobarRecargaTAI = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const { id_movimiento } = req.params;
+        await client.query('BEGIN');
+        
+        const updateMov = await client.query(`
+            UPDATE Movimiento_TAI SET estatus = 'aprobado' 
+            WHERE id_movimiento = $1 AND estatus = 'en_revision' RETURNING monto, cedula_miembro;
+        `, [id_movimiento]);
+
+        if (updateMov.rows.length === 0) {
+            const error = new Error('Movimiento no encontrado.');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        const { monto, cedula_miembro } = updateMov.rows[0];
+
+        await client.query(`
+            UPDATE Billetera_TAI 
+            SET saldo_actual = saldo_actual + $1, ultima_actualizacion = CURRENT_TIMESTAMP
+            WHERE cedula_miembro = $2;
+        `, [monto, cedula_miembro]);
+
+        await client.query('COMMIT');
+        res.status(200).json({ success: true, message: 'Recarga aprobada.' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
 const monthlyMassClose = async (req, res, next) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-
-        // 1. Buscar todos los folios que tienen líneas de cargo pero NO tienen factura emitida aún
         const foliosPendientes = await client.query(`
             SELECT fc.nro_solicitud, fc.fecha_apertura, s.cedula_miembro,
                    COALESCE(SUM((lc.cantidad * lc.precio_unitario) + lc.impuestos), 0) AS total_deuda
@@ -443,11 +550,7 @@ const monthlyMassClose = async (req, res, next) => {
 
         if (foliosPendientes.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(200).json({
-                success: true,
-                message: 'No hay folios pendientes de facturación en este ciclo.',
-                facturas_generadas: 0
-            });
+            return res.status(200).json({ success: true, message: 'No hay folios pendientes de facturación.', facturas_generadas: 0 });
         }
 
         const facturasEmitidas = [];
@@ -456,16 +559,78 @@ const monthlyMassClose = async (req, res, next) => {
                 INSERT INTO Factura (nro_solicitud, fecha_apertura_folio, saldo, estatus, cedula_titular)
                 VALUES ($1, $2, $3, 'Pendiente', $4) RETURNING nro_control, saldo;
             `, [folio.nro_solicitud, folio.fecha_apertura, folio.total_deuda, folio.cedula_miembro]);
-            
             facturasEmitidas.push(insertFac.rows[0]);
         }
+        await client.query('COMMIT');
+        res.status(200).json({ success: true, message: `Cierre ejecutado. ${facturasEmitidas.length} facturas emitidas.`, facturas_generadas: facturasEmitidas.length, detalle: facturasEmitidas });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
+const getSaldoTAI = async (req, res, next) => {
+    try {
+        const cedula = req.user.cedula;
+        const query = 'SELECT saldo_actual FROM Billetera_TAI WHERE cedula_miembro = $1';
+        const { rows } = await pool.query(query, [cedula]);
+        
+        // Si no tiene billetera creada aún, su saldo es 0
+        const saldo = rows.length > 0 ? rows[0].saldo_actual : 0.00;
+        
+        res.status(200).json({ success: true, saldo });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const processOnlineTAIPayment = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const cedula = req.user.cedula; // Tomamos la cédula directo de su sesión web
+        const { nro_control_factura, monto } = req.body;
+        
+        await client.query('BEGIN');
+
+        // Validar saldo del propio estudiante
+        const billeteraRes = await client.query(`
+            SELECT saldo_actual FROM Billetera_TAI WHERE cedula_miembro = $1 AND saldo_actual >= $2 LIMIT 1; 
+        `, [cedula, monto]); 
+
+        if (billeteraRes.rows.length === 0) {
+             const error = new Error('Saldo virtual insuficiente para cubrir esta factura.');
+             error.statusCode = 400;
+             throw error;
+        }
+
+        // Descontar el saldo
+        await client.query(`UPDATE Billetera_TAI SET saldo_actual = saldo_actual - $1 WHERE cedula_miembro = $2`, [monto, cedula]);
+        
+        // Registrar Movimiento de Consumo
+        await client.query(`
+            INSERT INTO Movimiento_TAI (cedula_miembro, tipo_movimiento, monto, estatus, referencia_bancaria)
+            VALUES ($1, 'CONSUMO', $2, 'aprobado', $3)
+        `, [cedula, monto, `PAGO-WEB-FAC-${nro_control_factura}`]);
+
+        // Pagar la factura
+        const { nro_control_factura: nro, fecha_pago } = await registrarPagoRaiz(client, nro_control_factura, monto);
+        
+        // Lo guardamos como pago presencial/TAI pero con etiquetas "WEB" para saber que fue online
+        await client.query(`INSERT INTO Pago_Presencial (nro_control_factura, fecha_pago, tasa_bcv) VALUES ($1, $2, 1.0)`, [nro, fecha_pago]);
+        await client.query(`
+            INSERT INTO Pago_TAI (nro_control_factura, fecha_pago, uid_chip, codigo_terminal_pos)
+            VALUES ($1, $2, 'PAGO-ONLINE', 'PORTAL-WEB')
+        `, [nro, fecha_pago]);
 
         await client.query('COMMIT');
-        res.status(200).json({
+        
+        const facActualizada = await pool.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1`, [nro]);
+        res.status(201).json({
             success: true,
-            message: `Cierre masivo mensual ejecutado. Se han emitido ${facturasEmitidas.length} facturas formales.`,
-            facturas_generadas: facturasEmitidas.length,
-            detalle: facturasEmitidas
+            message: 'Pago procesado exitosamente usando tu Billetera TAI.',
+            data: { metodo: 'Billetera TAI (Online)', factura_actualizada: facActualizada.rows[0] }
         });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -483,5 +648,10 @@ module.exports = {
     processMobilePayment,
     processCashPayment,
     processTAIPayment,
-    monthlyMassClose
+    monthlyMassClose,
+    solicitarRecargaTAI,     
+    getRecargasPendientes,   
+    aprobarRecargaTAI,       
+    getSaldoTAI,
+    processOnlineTAIPayment   
 };
