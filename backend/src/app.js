@@ -10,6 +10,10 @@ const serviceRoutes = require('./routes/serviceRoutes'); // <- Nueva importació
 const requestRoutes = require('./routes/requestRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const userRoutes = require('./routes/userRoutes');
+const beneficiaryRoutes = require('./routes/beneficiaryRoutes');
+const infrastructureRoutes = require('./routes/infrastructureRoutes');
+const jobBoardRoutes = require('./routes/jobBoardRoutes');
+const reportRoutes = require('./routes/reportRoutes');
 
 const app = express();
 
@@ -24,9 +28,14 @@ app.get('/api/v1/health', (req, res) => {
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/services', serviceRoutes); 
 app.use('/api/v1/requests', requestRoutes);
-app.use('/api/v1/payments', paymentRoutes);
+app.use('/api/v1/pagos', paymentRoutes);
 app.use('/api/v1/users', userRoutes);
-
+app.use('/api/v1/beneficiarios', beneficiaryRoutes);
 app.use(errorHandler);
+app.use('/api/v1/infraestructura', infrastructureRoutes);
+app.use('/api/v1/servicios', serviceRoutes);
+app.use('/api/v1/solicitudes', requestRoutes);
+app.use('/api/v1/bolsa-trabajo', jobBoardRoutes);
+app.use('/api/v1/reportes', reportRoutes);
 
 module.exports = app;

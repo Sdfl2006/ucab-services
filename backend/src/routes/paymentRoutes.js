@@ -1,12 +1,32 @@
-// src/routes/paymentRoutes.js
 const express = require('express');
 const router = express.Router();
-const { generateInvoice, processZellePayment } = require('../controllers/paymentController');
-const { authenticateToken } = require('../middlewares/authMiddleware');
+const {
+    getInvoices,
+    generateInvoice,
+    processCryptoPayment,
+    processCardPayment,
+    processMobilePayment,
+    processCashPayment,
+    processTAIPayment,
+    monthlyMassClose
+} = require('../controllers/paymentController');
 
-router.use(authenticateToken); // Proteger bloque financiero
+const { authenticateToken, authorizeRoles } = require('../middlewares/authMiddleware');
 
-router.post('/invoice', generateInvoice);
-router.post('/pay/zelle', processZellePayment);
+router.use(authenticateToken); // Seguridad global con JWT
+
+// Rutas generales y de facturación
+router.get('/facturas', getInvoices);
+router.post('/facturas', generateInvoice);
+
+// Rutas de liquidación multicanal (HU-37 a HU-41)
+router.post('/criptomoneda', processCryptoPayment);
+router.post('/tarjeta', authorizeRoles('Admin', 'Personal_Administrativo'), processCardPayment);
+router.post('/pago-movil', authorizeRoles('Admin', 'Personal_Administrativo'), processMobilePayment);
+router.post('/efectivo', authorizeRoles('Admin', 'Personal_Administrativo'), processCashPayment);
+router.post('/tai', authorizeRoles('Admin', 'Personal_Administrativo'), processTAIPayment);
+
+// HU-34: Cierre masivo mensual (exclusivo de Admin / Finanzas)
+router.post('/cierre-masivo', authorizeRoles('Admin', 'Personal_Administrativo'), monthlyMassClose);
 
 module.exports = router;

@@ -1,116 +1,382 @@
-// src/controllers/paymentController.js
-const db = require('../config/db');
+const { pool } = require('../config/db');
 
-// Generar una Factura a partir de una Solicitud (HU-32 y HU-33)
-// Generar una Factura a partir de una Solicitud (HU-32 y HU-33)
-const generateInvoice = async (req, res, next) => {
-  const client = await db.pool.connect(); 
-  try {
-    const { cedula } = req.user;
-    const { nro_solicitud } = req.body;
+/**
+ * @desc    Obtener listado de facturas del usuario (o todas si es Admin)
+ * @route   GET /api/v1/pagos/facturas
+ * @access  Private
+ */
+const getInvoices = async (req, res, next) => {
+    try {
+        const cedula = req.user.cedula;
+        const roles = req.user.roles || [];
 
-    await client.query('BEGIN'); 
+        let query = `SELECT * FROM Factura ORDER BY fecha_emision DESC`;
+        let params = [];
 
-    // 1. Validar propiedad de la solicitud y obtener el precio del servicio
-    const solQuery = `
-      SELECT s.precio_base 
-      FROM Solicitud_Servicio sol
-      JOIN Servicio s ON sol.codigo_servicio = s.codigo_servicio
-      WHERE sol.nro_solicitud = $1 AND sol.cedula_miembro = $2;
-    `;
-    const solResult = await client.query(solQuery, [nro_solicitud, cedula]);
-    
-    if (solResult.rows.length === 0) {
-      throw { statusCode: 404, message: 'Solicitud no encontrada o no autorizada.' };
+        if (!roles.includes('Admin') && !roles.includes('Personal_Administrativo')) {
+            query = `SELECT * FROM Factura WHERE cedula_titular = $1 ORDER BY fecha_emision DESC`;
+            params = [cedula];
+        }
+
+        const { rows } = await pool.query(query, params);
+        res.status(200).json({ success: true, count: rows.length, data: rows });
+    } catch (error) {
+        next(error);
     }
-    const precio = solResult.rows[0].precio_base;
+};
 
-    // SOLUCIÓN: Definimos la fecha exacta en Node.js como string ISO
-    // Esto garantiza que BD y servidor manejen exactamente los mismos milisegundos
-    const fechaExacta = new Date().toISOString();
+/**
+ * @desc    HU-33: Generar Factura individual a partir de un Folio de Consumo
+ * @route   POST /api/v1/pagos/facturas
+ * @access  Private
+ */
+const generateInvoice = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const { nro_solicitud, fecha_apertura, rif_corporativo, razon_social_corporativa } = req.body;
 
-    // 2. Abrir Folio de Consumo usando nuestra fecha exacta
+        await client.query('BEGIN');
+
+        // 1. Obtener la solicitud para saber quién es el titular
+        const solRes = await client.query(`SELECT cedula_miembro FROM Solicitud_Servicio WHERE nro_solicitud = $1`, [nro_solicitud]);
+        if (solRes.rows.length === 0) {
+            const error = new Error('La solicitud especificada no existe.');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        // 2. Sumar las líneas de cargo del folio
+        const sumaRes = await client.query(
+            `SELECT COALESCE(SUM((cantidad * precio_unitario) + impuestos), 0) AS total_deuda
+             FROM Linea_Cargo WHERE nro_solicitud = $1 AND fecha_apertura_folio = $2`,
+            [nro_solicitud, fecha_apertura]
+        );
+        const totalDeuda = parseFloat(sumaRes.rows[0].total_deuda);
+
+        if (totalDeuda <= 0) {
+            const error = new Error('No se puede generar una factura para un folio sin cargos acumulados.');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        // 3. Insertar Factura
+        const insertQuery = `
+            INSERT INTO Factura (
+                nro_solicitud, fecha_apertura_folio, saldo, estatus, 
+                cedula_titular, rif_corporativo, razon_social_corporativa
+            ) VALUES ($1, $2, $3, 'Pendiente', $4, $5, $6) RETURNING *;
+        `;
+        const { rows } = await client.query(insertQuery, [
+            nro_solicitud, fecha_apertura, totalDeuda, solRes.rows[0].cedula_miembro,
+            rif_corporativo || null, razon_social_corporativa || null
+        ]);
+
+        await client.query('COMMIT');
+        res.status(201).json({ success: true, message: 'Factura fiscal generada con éxito.', data: rows[0] });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * Función auxiliar interna para validar y registrar la tabla raíz (Pago)
+ */
+/**
+ * Función auxiliar interna para validar y registrar la tabla raíz (Pago)
+ * Corregida para garantizar sincronicidad exacta de microsegundos entre tablas
+ */
+const registrarPagoRaiz = async (client, nro_control_factura, monto) => {
+    // 1. Validar factura
+    const facRes = await client.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1 FOR UPDATE`, [nro_control_factura]);
+    if (facRes.rows.length === 0) {
+        const error = new Error('La factura a liquidar no existe.');
+        error.statusCode = 404;
+        throw error;
+    }
+    const { saldo, estatus } = facRes.rows[0];
+    if (estatus.toLowerCase() === 'pagada' || parseFloat(saldo) <= 0) {
+        const error = new Error('Esta factura ya se encuentra solvente y pagada en su totalidad.');
+        error.statusCode = 400;
+        throw error;
+    }
+    if (parseFloat(monto) > parseFloat(saldo)) {
+        const error = new Error(`El monto abonado (${monto}) excede el saldo pendiente de la factura (${saldo}).`);
+        error.statusCode = 400;
+        throw error;
+    }
+
+    // 2. Generamos el timestamp exacto en Node.js para evitar pérdida de microsegundos en la herencia
+    const fecha_pago = new Date().toISOString();
+
+    // 3. Insertamos en Pago pasando explícitamente la fecha_pago
     await client.query(
-      'INSERT INTO Folio_Consumo (nro_solicitud, fecha_apertura) VALUES ($1, $2)', 
-      [nro_solicitud, fechaExacta]
+        `INSERT INTO Pago (nro_control_factura, fecha_pago, monto) VALUES ($1, $2, $3);`,
+        [nro_control_factura, fecha_pago, monto]
     );
 
-    // 3. Insertar la Línea de Cargo amarrada a la fecha exacta
-    await client.query(`
-      INSERT INTO Linea_Cargo (nro_solicitud, fecha_apertura_folio, nro_linea, concepto, cantidad, impuestos, precio_unitario)
-      VALUES ($1, $2, 1, 'Cargo automático por servicio', 1, 0, $3)
-    `, [nro_solicitud, fechaExacta, precio]);
-
-    // 4. Generar Factura Oficial amarrada a la fecha exacta
-    const facResult = await client.query(`
-      INSERT INTO Factura (nro_solicitud, fecha_apertura_folio, saldo, estatus, cedula_titular)
-      VALUES ($1, $2, $3, 'Pendiente', $4)
-      RETURNING nro_control, saldo, estatus;
-    `, [nro_solicitud, fechaExacta, precio, cedula]);
-
-    await client.query('COMMIT'); 
-    
-    res.status(201).json({
-      success: true,
-      message: 'Factura generada exitosamente.',
-      data: facResult.rows[0]
-    });
-  } catch (error) {
-    await client.query('ROLLBACK'); 
-    next(error);
-  } finally {
-    client.release(); 
-  }
+    return { nro_control_factura, fecha_pago };
 };
 
-// Procesar Pago Digital (Zelle - HU-36)
-const processZellePayment = async (req, res, next) => {
-  const client = await db.pool.connect();
-  try {
-    const { nro_control_factura, monto, correo_origen, nombre_titular, codigo_transaccion } = req.body;
+/**
+ * @desc    HU-37: Procesar Pago con Criptomonedas (TRC20 / ERC20)
+ * @route   POST /api/v1/pagos/criptomoneda
+ * @access  Private
+ */
+const processCryptoPayment = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const { nro_control_factura, monto, hash_txid, red_utilizada, billetera_origen, tasa_conversion } = req.body;
+        await client.query('BEGIN');
 
-    // Regla R-13: El monto debe ser mayor a cero
-    if (!monto || monto <= 0) {
-      return res.status(400).json({ success: false, message: 'El monto de la transacción debe ser mayor a cero (R-13).' });
+        const { nro_control_factura: nro, fecha_pago } = await registrarPagoRaiz(client, nro_control_factura, monto);
+
+        // Herencia Digital -> Criptomoneda
+        await client.query(`INSERT INTO Pago_Digital (nro_control_factura, fecha_pago) VALUES ($1, $2)`, [nro, fecha_pago]);
+        await client.query(
+            `INSERT INTO Pago_Criptomoneda (nro_control_factura, fecha_pago, hash_txid, red_utilizada, billetera_origen, tasa_conversion)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [nro, fecha_pago, hash_txid, red_utilizada, billetera_origen, tasa_conversion]
+        );
+
+        await client.query('COMMIT');
+
+        // Consultar factura actualizada (por si actuó el trigger DB R-18)
+        const facActualizada = await pool.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1`, [nro]);
+        res.status(201).json({
+            success: true,
+            message: 'Pago en criptomonedas confirmado en blockchain y procesado.',
+            data: { metodo: 'Criptomoneda', hash_txid, factura_actualizada: facActualizada.rows[0] }
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23505') error.message = 'El hash TXID de criptomoneda ya fue registrado en otra transacción.';
+        next(error);
+    } finally {
+        client.release();
     }
-
-    await client.query('BEGIN');
-
-    // SOLUCIÓN: Congelamos el timestamp exacto en Node.js para amarrar la herencia
-    const fechaExacta = new Date().toISOString();
-
-    // 1. Insertar en la tabla padre (Pago) forzando nuestra fecha exacta
-    await client.query(`
-      INSERT INTO Pago (nro_control_factura, fecha_pago, monto) 
-      VALUES ($1, $2, $3);
-    `, [nro_control_factura, fechaExacta, monto]);
-
-    // 2. Insertar en la jerarquía intermedia (Pago_Digital) con la misma fecha
-    await client.query(`
-      INSERT INTO Pago_Digital (nro_control_factura, fecha_pago) 
-      VALUES ($1, $2);
-    `, [nro_control_factura, fechaExacta]);
-
-    // 3. Insertar en la hoja final (Pago_Zelle) con la misma fecha
-    await client.query(`
-      INSERT INTO Pago_Zelle (nro_control_factura, fecha_pago, correo_origen, nombre_titular, codigo_transaccion) 
-      VALUES ($1, $2, $3, $4, $5);
-    `, [nro_control_factura, fechaExacta, correo_origen, nombre_titular, codigo_transaccion]);
-
-    // Nota: El Trigger AFTER INSERT en la BD se encargará de restar este monto al saldo de la factura (R-18).
-
-    await client.query('COMMIT');
-    
-    res.status(201).json({
-      success: true,
-      message: 'Pago vía Zelle registrado exitosamente. El saldo de la factura ha sido actualizado.'
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    next(error);
-  } finally {
-    client.release();
-  }
 };
 
-module.exports = { generateInvoice, processZellePayment };
+/**
+ * @desc    HU-38: Procesar Pago Presencial con Tarjeta (Crédito / Débito)
+ * @route   POST /api/v1/pagos/tarjeta
+ * @access  Private (Caja / Admin)
+ */
+const processCardPayment = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const { nro_control_factura, monto, nro_tarjeta, fecha_vencimiento, compania_emisora, tipo_red, tasa_bcv } = req.body;
+
+        if (!['Nacional', 'Internacional'].includes(tipo_red)) {
+            const error = new Error("El tipo de red debe ser 'Nacional' o 'Internacional'.");
+            error.statusCode = 400;
+            throw error;
+        }
+
+        await client.query('BEGIN');
+        const { nro_control_factura: nro, fecha_pago } = await registrarPagoRaiz(client, nro_control_factura, monto);
+
+        // Herencia Presencial -> Tarjeta
+        await client.query(`INSERT INTO Pago_Presencial (nro_control_factura, fecha_pago, tasa_bcv) VALUES ($1, $2, $3)`, [nro, fecha_pago, tasa_bcv || 1.0]);
+        await client.query(
+            `INSERT INTO Pago_Tarjeta (nro_control_factura, fecha_pago, nro_tarjeta, fecha_vencimiento, compania_emisora, tipo_red)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [nro, fecha_pago, nro_tarjeta, fecha_vencimiento, compania_emisora, tipo_red]
+        );
+
+        await client.query('COMMIT');
+        const facActualizada = await pool.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1`, [nro]);
+        res.status(201).json({
+            success: true,
+            message: `Pago procesado por red ${tipo_red} con tarjeta ${compania_emisora}.`,
+            data: { metodo: 'Tarjeta', factura_actualizada: facActualizada.rows[0] }
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @desc    HU-39: Procesar Pago Presencial por Pago Móvil
+ * @route   POST /api/v1/pagos/pago-movil
+ * @access  Private (Caja / Admin)
+ */
+const processMobilePayment = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const { nro_control_factura, monto, nro_telefono, banco_origen, nro_referencia, tasa_bcv } = req.body;
+        await client.query('BEGIN');
+
+        const { nro_control_factura: nro, fecha_pago } = await registrarPagoRaiz(client, nro_control_factura, monto);
+
+        await client.query(`INSERT INTO Pago_Presencial (nro_control_factura, fecha_pago, tasa_bcv) VALUES ($1, $2, $3)`, [nro, fecha_pago, tasa_bcv || 1.0]);
+        await client.query(
+            `INSERT INTO Pago_Movil (nro_control_factura, fecha_pago, nro_telefono, fecha_movimiento, banco_origen, nro_referencia)
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5)`,
+            [nro, fecha_pago, nro_telefono, banco_origen, nro_referencia]
+        );
+
+        await client.query('COMMIT');
+        const facActualizada = await pool.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1`, [nro]);
+        res.status(201).json({
+            success: true,
+            message: 'Pago móvil validado y conciliado en caja.',
+            data: { metodo: 'Pago Móvil', nro_referencia, factura_actualizada: facActualizada.rows[0] }
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.code === '23505') error.message = 'Este número de referencia de Pago Móvil ya fue procesado.';
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @desc    HU-40: Procesar Pago Presencial en Efectivo (Divisas / Bolívares)
+ * @route   POST /api/v1/pagos/efectivo
+ * @access  Private (Caja / Admin)
+ */
+const processCashPayment = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const { nro_control_factura, monto, moneda_curso, monto_recibido, desgloce_denominaciones, tasa_bcv } = req.body;
+
+        if (!['bolívares', 'divisas'].includes(moneda_curso.toLowerCase())) {
+            const error = new Error("La moneda de curso debe ser 'bolívares' o 'divisas'.");
+            error.statusCode = 400;
+            throw error;
+        }
+
+        await client.query('BEGIN');
+        const { nro_control_factura: nro, fecha_pago } = await registrarPagoRaiz(client, nro_control_factura, monto);
+
+        await client.query(`INSERT INTO Pago_Presencial (nro_control_factura, fecha_pago, tasa_bcv) VALUES ($1, $2, $3)`, [nro, fecha_pago, tasa_bcv || 1.0]);
+        await client.query(
+            `INSERT INTO Pago_Efectivo (nro_control_factura, fecha_pago, moneda_curso, monto_recibido, desgloce_denominaciones)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [nro, fecha_pago, moneda_curso.toLowerCase(), monto_recibido, desgloce_denominaciones || null]
+        );
+
+        await client.query('COMMIT');
+        const facActualizada = await pool.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1`, [nro]);
+        res.status(201).json({
+            success: true,
+            message: `Pago en efectivo (${moneda_curso}) ingresado en taquilla.`,
+            data: { metodo: 'Efectivo', factura_actualizada: facActualizada.rows[0] }
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @desc    HU-41: Procesar Pago Inteligente con Billetera TAI (Lectura chip NFC)
+ * @route   POST /api/v1/pagos/tai
+ * @access  Private (Caja / Terminal POS)
+ */
+const processTAIPayment = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const { nro_control_factura, monto, uid_chip, codigo_terminal_pos } = req.body;
+        await client.query('BEGIN');
+
+        const { nro_control_factura: nro, fecha_pago } = await registrarPagoRaiz(client, nro_control_factura, monto);
+
+        await client.query(`INSERT INTO Pago_Presencial (nro_control_factura, fecha_pago, tasa_bcv) VALUES ($1, $2, 1.0)`, [nro, fecha_pago]);
+        await client.query(
+            `INSERT INTO Pago_TAI (nro_control_factura, fecha_pago, uid_chip, codigo_terminal_pos)
+             VALUES ($1, $2, $3, $4)`,
+            [nro, fecha_pago, uid_chip, codigo_terminal_pos]
+        );
+
+        await client.query('COMMIT');
+        const facActualizada = await pool.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1`, [nro]);
+        res.status(201).json({
+            success: true,
+            message: 'Cobro por carnet NFC (Billetera TAI) debitado exitosamente.',
+            data: { metodo: 'Billetera TAI', uid_chip, factura_actualizada: facActualizada.rows[0] }
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @desc    HU-34 & Foco Técnico: Cierre Masivo Mensual (Convierte folios abiertos en facturas)
+ * @route   POST /api/v1/pagos/cierre-masivo
+ * @access  Private (Admin / Finanzas)
+ */
+const monthlyMassClose = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Buscar todos los folios que tienen líneas de cargo pero NO tienen factura emitida aún
+        const foliosPendientes = await client.query(`
+            SELECT fc.nro_solicitud, fc.fecha_apertura, s.cedula_miembro,
+                   COALESCE(SUM((lc.cantidad * lc.precio_unitario) + lc.impuestos), 0) AS total_deuda
+            FROM Folio_Consumo fc
+            JOIN Solicitud_Servicio s ON fc.nro_solicitud = s.nro_solicitud
+            JOIN Linea_Cargo lc ON fc.nro_solicitud = lc.nro_solicitud AND fc.fecha_apertura = lc.fecha_apertura_folio
+            LEFT JOIN Factura f ON fc.nro_solicitud = f.nro_solicitud AND fc.fecha_apertura = f.fecha_apertura_folio
+            WHERE f.nro_control IS NULL
+            GROUP BY fc.nro_solicitud, fc.fecha_apertura, s.cedula_miembro
+            HAVING COALESCE(SUM((lc.cantidad * lc.precio_unitario) + lc.impuestos), 0) > 0;
+        `);
+
+        if (foliosPendientes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(200).json({
+                success: true,
+                message: 'No hay folios pendientes de facturación en este ciclo.',
+                facturas_generadas: 0
+            });
+        }
+
+        const facturasEmitidas = [];
+        for (const folio of foliosPendientes.rows) {
+            const insertFac = await client.query(`
+                INSERT INTO Factura (nro_solicitud, fecha_apertura_folio, saldo, estatus, cedula_titular)
+                VALUES ($1, $2, $3, 'Pendiente', $4) RETURNING nro_control, saldo;
+            `, [folio.nro_solicitud, folio.fecha_apertura, folio.total_deuda, folio.cedula_miembro]);
+            
+            facturasEmitidas.push(insertFac.rows[0]);
+        }
+
+        await client.query('COMMIT');
+        res.status(200).json({
+            success: true,
+            message: `Cierre masivo mensual ejecutado. Se han emitido ${facturasEmitidas.length} facturas formales.`,
+            facturas_generadas: facturasEmitidas.length,
+            detalle: facturasEmitidas
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        next(error);
+    } finally {
+        client.release();
+    }
+};
+
+module.exports = {
+    getInvoices,
+    generateInvoice,
+    processCryptoPayment,
+    processCardPayment,
+    processMobilePayment,
+    processCashPayment,
+    processTAIPayment,
+    monthlyMassClose
+};
