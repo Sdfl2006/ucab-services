@@ -36,7 +36,9 @@ const createRequest = async (req, res, next) => {
         const {
             codigo_servicio,
             nro_identificador_espacio,
-            acompanantes // Array opcional: [{ cedula_acompanante: '99888777', nombre: 'Marta Gómez' }]
+            hora_inicio, // <-- AÑADIDO: Recibir la hora del frontend
+            hora_fin,    // <-- AÑADIDO: Recibir la hora del frontend
+            acompanantes 
         } = req.body;
 
         await client.query('BEGIN');
@@ -49,14 +51,18 @@ const createRequest = async (req, res, next) => {
             throw error;
         }
 
-        // 2. Crear la solicitud base (Compatibilidad con tu Sprint 1)
+        // 2. Crear la solicitud base (AHORA SÍ GUARDANDO LAS HORAS PARA LA HU-16)
         const insertSolicitud = `
-            INSERT INTO Solicitud_Servicio (cedula_miembro, codigo_servicio, nro_identificador_espacio, estatus_general)
-            VALUES ($1, $2, $3, 'en_proceso')
+            INSERT INTO Solicitud_Servicio (cedula_miembro, codigo_servicio, nro_identificador_espacio, hora_inicio, hora_fin, estatus_general)
+            VALUES ($1, $2, $3, $4, $5, 'en_proceso')
             RETURNING *;
         `;
         const solicitudRes = await client.query(insertSolicitud, [
-            cedula_miembro, codigo_servicio, nro_identificador_espacio || null
+            cedula_miembro, 
+            codigo_servicio, 
+            nro_identificador_espacio || null,
+            hora_inicio, // <-- AÑADIDO: Pasar parámetro
+            hora_fin     // <-- AÑADIDO: Pasar parámetro
         ]);
         const nro_solicitud = solicitudRes.rows[0].nro_solicitud;
 

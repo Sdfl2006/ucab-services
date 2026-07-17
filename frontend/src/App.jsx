@@ -15,6 +15,8 @@ import PaymentsHistory from './pages/PaymentsHistory';
 import Profile from './pages/Profile';
 import SeguimientoSolicitud from './pages/SeguimientoSolicitud';
 import Taquilla from './pages/Taquilla';
+import GestionInfraestructura from './pages/GestionInfraestructura';
+import BolsaTrabajo from './pages/BolsaTrabajo';
 
 const PlaceholderView = ({ title }) => (
   <div className="p-8 text-center bg-white rounded-xl border border-gray-200">
@@ -53,6 +55,9 @@ export default function App() {
           <Route path="/taquilla" element={<Taquilla />} />
           <Route path="/directorio-medico" element={<MedicalDirectory />} />
           <Route path="/perfil" element={<Profile />} />
+          
+          <Route path="/infraestructura" element={<GestionInfraestructura />} />
+          <Route path="/bolsa-trabajo" element={<BolsaTrabajo />} />
 
           {/* Rutas aún no implementadas (Fase 4 y 5) */}
           <Route path="/mis-citas" element={<PlaceholderView title="Mis Citas Médicas y Académicas" />} />

@@ -18,9 +18,14 @@ export default function Navbar() {
     { name: 'Inicio', path: '/dashboard' },
     { name: 'Mis Citas', path: '/mis-citas' },
     { name: 'Pagos', path: '/pagos' },
+    { name: 'Bolsa de Trabajo', path: '/bolsa-trabajo' },
     { name: 'Soporte', path: '/soporte' },
     { name: 'Solicitudes', path: '/solicitudes' },
-    ...(hasAnyRole('Admin', 'Personal_Administrativo') ? [{ name: 'Taquilla', path: '/taquilla' }] : []),
+    // Módulos exclusivos de gerencia/operaciones
+    ...(hasAnyRole('Admin', 'Personal_Administrativo') ? [
+      { name: 'Taquilla', path: '/taquilla' },
+      { name: 'Infraestructura', path: '/infraestructura' }
+    ] : []),
   ];
 
   return (

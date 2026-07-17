@@ -12,8 +12,7 @@ export default function ServiceRequest() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const [categoria, setCategoria] = useState(searchParams.get('categoria') || 'Deportes');
-  const [servicioSeleccionado, setServicioSeleccionado] = useState('');
+  const [categoria, setCategoria] = useState(searchParams.get('categoria') || 'Deporte');  const [servicioSeleccionado, setServicioSeleccionado] = useState('');
   const [sede, setSede] = useState(user?.sede || 'Montalbán');
   const [fecha, setFecha] = useState('');
   const [hora, setHora] = useState('10:00');
@@ -46,7 +45,10 @@ export default function ServiceRequest() {
 
   const opcionesActuales = useMemo(() => {
     return servicios
-      .filter((servicio) => servicio.nombre_categoria === categoria)
+      .filter((servicio) => 
+        servicio.nombre_categoria === categoria && 
+        servicio.nombre_sede === sede
+      )
       .map((servicio) => ({
         id: servicio.codigo_servicio,
         nombre: servicio.descripcion_detallada || servicio.codigo_servicio,
@@ -54,13 +56,15 @@ export default function ServiceRequest() {
         sede: servicio.nombre_sede,
         codigo_servicio: servicio.codigo_servicio,
       }));
-  }, [servicios, categoria]);
+  }, [servicios, categoria, sede]); 
 
   useEffect(() => {
-    if (opcionesActuales.length > 0 && !servicioSeleccionado) {
-      setServicioSeleccionado(opcionesActuales[0].codigo_servicio);
-    }
-  }, [opcionesActuales, servicioSeleccionado]);
+    if (opcionesActuales.length > 0) {
+          setServicioSeleccionado(opcionesActuales[0].codigo_servicio);
+        } else {
+          setServicioSeleccionado('');
+        }
+      }, [opcionesActuales]);
 
   const servicioSeleccionadoDetalle = opcionesActuales.find((o) => o.codigo_servicio === servicioSeleccionado) || opcionesActuales[0] || { nombre: '', precioUsd: 0, sede };
   const montoTotalUsd = servicioSeleccionadoDetalle.precioUsd || 0;
@@ -77,6 +81,15 @@ export default function ServiceRequest() {
     setListaAcompanantes(listaAcompanantes.filter((_, i) => i !== index));
   };
 
+  // Función auxiliar para saber qué espacio físico enviar a la BD
+  // Función auxiliar para saber qué espacio físico enviar a la BD
+  const obtenerEspacioPorDefecto = (cat, sedeActual) => {
+    if (cat === 'Deporte' && sedeActual === 'Guayana') return 'GUY-DEP-CF1'; 
+    if (cat === 'Cultura' && sedeActual === 'Montalbán') return 'MON-CIN-AUD'; 
+    if (cat === 'Cultura' && sedeActual === 'Guayana') return 'GUY-AMG-AUD';
+    return undefined; 
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -85,18 +98,26 @@ export default function ServiceRequest() {
       setError('Por favor seleccione una fecha programada para el servicio.');
       return;
     }
-
     if (!servicioSeleccionadoDetalle?.codigo_servicio) {
       setError('Debe seleccionar un servicio válido para continuar.');
       return;
     }
 
     setIsSubmitting(true);
-
     try {
+      const espacioId = obtenerEspacioPorDefecto(categoria, sede);
+      
+      // Armamos las horas simuladas basadas en tu selector para probar la BD
+      let horaInicio = '10:00:00';
+      let horaFin = '12:00:00';
+      if (hora === '03:00 PM') { horaInicio = '15:00:00'; horaFin = '17:00:00'; }
+      if (hora === '05:00 PM') { horaInicio = '17:00:00'; horaFin = '19:00:00'; }
+
       const createdRequest = await requestService.createRequest({
         codigo_servicio: servicioSeleccionadoDetalle.codigo_servicio,
-        nro_identificador_espacio: servicioSeleccionadoDetalle.codigo_servicio,
+        nro_identificador_espacio: espacioId, // YA NO DA ERROR DE FOREIGN KEY
+        hora_inicio: `${fecha} ${horaInicio}`, // CRUCIAL PARA LA HU-16
+        hora_fin: `${fecha} ${horaFin}`,       // CRUCIAL PARA LA HU-16
         acompanantes: listaAcompanantes.map((a) => ({ cedula_acompanante: a.cedula, nombre: a.nombre })),
       });
 
@@ -118,6 +139,7 @@ export default function ServiceRequest() {
       localStorage.setItem('ucab_pending_order', JSON.stringify(nuevaSolicitud));
       navigate('/checkout');
     } catch (err) {
+      // Si el trigger de la base de datos rechaza por solapamiento, el error se mostrará aquí
       setError(err.friendlyMessage || 'No se pudo enviar la solicitud. Intente nuevamente.');
     } finally {
       setIsSubmitting(false);
@@ -154,14 +176,12 @@ export default function ServiceRequest() {
                 onChange={(e) => { setCategoria(e.target.value); setServicioSeleccionado(''); }}
                 className="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ucab-green/20 focus:border-ucab-green font-medium"
               >
-                <option value="Deportes">Deportes (Alquiler Canchas)</option>
-                <option value="Cultura y Eventos">Cultura y Eventos (Auditorios)</option>
-                <option value="Servicios Médicos">Servicios Médicos y Salud</option>
-                <option value="Trámites Académicos">Trámites Académicos (Constancias)</option>
-                <option value="Carnetización">Carnetización y TAI</option>
+                <option value="Deporte">Deportes (Alquiler Canchas)</option>
+                <option value="Cultura">Cultura y Eventos (Auditorios)</option>
+                <option value="Salud">Servicios Médicos y Salud</option>
+                <option value="Educación Continua">Trámites y Educación Continua</option>
               </select>
             </div>
-
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">SEDE UCAB PARA EJECUCIÓN</label>
               <select
@@ -235,7 +255,7 @@ export default function ServiceRequest() {
           </div>
         </Card>
 
-        {(categoria === 'Deportes' || categoria === 'Cultura y Eventos' || categoria === 'alquiler') && (
+        {(categoria === 'Deporte' || categoria === 'Cultura' || categoria === 'alquiler') && (
           <Card
             title="3. Registro de Acompañantes (Control de Acceso Campus)"
             subtitle="Si va a ingresar al campus con compañeros de equipo o invitados, regístrelos aquí para generar el pase de seguridad."
