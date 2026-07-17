@@ -1,49 +1,72 @@
--- 1. Habilitar extensión para usar operadores escalares con rangos temporales
+-- ============================================================================
+-- SCRIPT 07: ALTERACIONES - CORREGIDO CONTRA EL ESQUEMA REAL
+-- (version original de Santiago referenciaba columnas de la traduccion vieja
+--  que ya no existen: id_entidad, nombre_sede_asignada, etc. Se corrige aqui)
+-- ============================================================================
+
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
--- BRECHA 1: Solapamiento Horario de Reservaciones (HU-16 / R-21)
--- Añadimos las marcas de tiempo a la tabla
-ALTER TABLE Solicitud_Servicio 
-ADD COLUMN hora_inicio TIMESTAMP,
-ADD COLUMN hora_fin TIMESTAMP;
+-- ----------------------------------------------------------------------------
+-- BRECHA 1: Solapamiento horario de reservaciones (HU-16 / R-21)
+-- ----------------------------------------------------------------------------
+ALTER TABLE Solicitud_Servicio
+ADD COLUMN IF NOT EXISTS hora_inicio TIMESTAMP,
+ADD COLUMN IF NOT EXISTS hora_fin    TIMESTAMP;
 
--- Constraint mecánico que impedirá choques a nivel de motor
+ALTER TABLE Solicitud_Servicio
+DROP CONSTRAINT IF EXISTS no_solapamiento_espacios;
+
 ALTER TABLE Solicitud_Servicio
 ADD CONSTRAINT no_solapamiento_espacios
 EXCLUDE USING gist (
-    nombre_sede_asignada WITH =,
-    nombre_edificacion_asignada WITH =,
-    nro_identificador_asignado WITH =,
-    tstzrange(hora_inicio, hora_fin) WITH &&
-) WHERE (estatus_general != 'cancelada'); -- Ignoramos las solicitudes canceladas
+    nro_identificador_espacio WITH =,
+    tsrange(hora_inicio, hora_fin) WITH &&
+) WHERE (estatus_general != 'cancelada' AND nro_identificador_espacio IS NOT NULL);
 
-
--- BRECHA 2: Límite de Tarifas (HU-22 / R-17)
+-- ----------------------------------------------------------------------------
+-- BRECHA 2: Límite de tarifas por categoría y sede (HU-22 / R-17)
+-- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_verificar_limite_tarifa()
 RETURNS TRIGGER AS $$
 DECLARE
     v_max_permitido DECIMAL(15,4);
 BEGIN
-    -- Calculamos el tope cruzando el límite de la categoría y el ajuste de ubicación
     SELECT MAX(cs.limite_costo_max * sd.ajuste_ubicacion)
     INTO v_max_permitido
     FROM Servicio s
-    JOIN Entidad_prestadora ep ON s.id_entidad = ep.id_entidad
-    JOIN Categoria_servicio cs ON ep.nombre_categoria = cs.nombre_categoria
-    JOIN Servicio_Sede ss ON s.codigo_servicio = ss.codigo_servicio
-    JOIN Sede sd ON ss.nombre_sede = sd.nombre_sede
+    JOIN Categoria_servicio cs ON s.nombre_categoria = cs.nombre_categoria
+    JOIN Servicio_Sede ss      ON s.codigo_servicio = ss.codigo_servicio
+    JOIN Sede sd                ON ss.nombre_sede = sd.nombre_sede
     WHERE s.codigo_servicio = NEW.codigo_servicio;
 
+    IF v_max_permitido IS NULL THEN
+        -- el servicio no tiene sede asociada en Servicio_Sede: no se puede validar, se deja pasar
+        RETURN NEW;
+    END IF;
+
     IF NEW.monto > v_max_permitido THEN
-        RAISE EXCEPTION 'Operación rechazada: El monto (%) supera el límite de costo máximo permitido (%) estipulado para su sede y categoría.', NEW.monto, v_max_permitido;
+        RAISE EXCEPTION 'Operación rechazada: el monto (%) supera el límite permitido (%) para la sede y categoría del servicio.', NEW.monto, v_max_permitido;
     END IF;
 
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_limite_tarifa ON Tarifa;
 CREATE TRIGGER trg_limite_tarifa
 BEFORE INSERT OR UPDATE ON Tarifa
 FOR EACH ROW
 EXECUTE FUNCTION fn_verificar_limite_tarifa();
 
+-- ----------------------------------------------------------------------------
+-- PRUEBA RAPIDA
+-- ----------------------------------------------------------------------------
+-- Debe fallar (SRV-004 es Deporte, limite 300, sede Guayana ajuste 0.85 -> max 255)
+-- INSERT INTO Tarifa (codigo_servicio, id, fecha_inicio_vigencia, perfil_solicitante, monto)
+--   VALUES ('SRV-004', 99, CURRENT_DATE, 'público externo', 500.00);
+
+-- Debe fallar (mismo espacio, mismo bloque horario que otra solicitud activa)
+-- UPDATE Solicitud_Servicio SET hora_inicio = '2026-07-01 16:00', hora_fin = '2026-07-01 18:00'
+--   WHERE nro_solicitud = 5;
+-- INSERT INTO Solicitud_Servicio (cedula_miembro, codigo_servicio, nro_identificador_espacio, hora_inicio, hora_fin)
+--   VALUES ('V-30111222','SRV-004','GUY-DEP-CF1','2026-07-01 17:00','2026-07-01 19:00');
