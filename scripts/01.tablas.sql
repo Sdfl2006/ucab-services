@@ -122,13 +122,13 @@ CREATE TABLE Carga_mayor (
 -- ============================================================================
 
 CREATE TABLE Cuenta (
-    cedula VARCHAR(15) PRIMARY KEY,
-    fecha_cambio_clave DATE,
-    ultima_conexion TIMESTAMP,
+    cedula VARCHAR(20) PRIMARY KEY REFERENCES Miembro_comunidad(cedula) ON DELETE CASCADE,
+    contrasena VARCHAR(255) NOT NULL DEFAULT '123456',
+    fecha_cambio_clave DATE DEFAULT CURRENT_DATE,
+    ultima_conexion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     estado_cuenta VARCHAR(20) DEFAULT 'activa' CHECK (estado_cuenta IN ('activa', 'suspendida', 'bloqueada')),
-    estatus VARCHAR(15) DEFAULT 'deshabilitado',
-    intentos_fallidos INT DEFAULT 0,
-    FOREIGN KEY (cedula) REFERENCES Miembro_comunidad(cedula) ON DELETE CASCADE
+    estatus VARCHAR(20) DEFAULT 'habilitado' CHECK (estatus IN ('habilitado', 'deshabilitado')), -- Control MFA / 2FA
+    intentos_fallidos INTEGER DEFAULT 0
 );
 
 CREATE TABLE Sesion (
