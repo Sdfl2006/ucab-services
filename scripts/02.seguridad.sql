@@ -23,3 +23,7 @@ GRANT SELECT ON Servicio, Cargos_adicionales, Miembro_comunidad TO ucab_cajero;
 GRANT SELECT ON Sede, Edificacion, Espacio_fisico, Categoria_servicio, Entidad_prestadora, 
     Interna, Externa, Servicio, Tarifa, Requisito, Servicio_Requisito, Servicio_Sede, 
     Vacante TO ucab_usuario_web;
+
+-- AGREGAR ESTAS DOS LÍNEAS PARA LA HU-27:
+GRANT INSERT, SELECT ON Solicitud_Servicio TO ucab_usuario_web;
+GRANT USAGE, SELECT ON SEQUENCE solicitud_servicio_id_seq TO ucab_usuario_web;
