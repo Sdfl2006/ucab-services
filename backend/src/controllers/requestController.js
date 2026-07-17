@@ -66,6 +66,21 @@ const createRequest = async (req, res, next) => {
         ]);
         const nro_solicitud = solicitudRes.rows[0].nro_solicitud;
 
+        // --- NUEVO: CREAR EL FOLIO Y LA LÍNEA DE CARGO ---
+        const servData = await client.query(`SELECT precio_base, descripcion_detallada FROM Servicio WHERE codigo_servicio = $1`, [codigo_servicio]);
+        
+        const insertFolio = await client.query(
+            `INSERT INTO Folio_Consumo (nro_solicitud, fecha_apertura) VALUES ($1, $2) RETURNING fecha_apertura`,
+            [nro_solicitud, solicitudRes.rows[0].fecha_creacion]
+        );
+        
+        await client.query(
+            `INSERT INTO Linea_Cargo (nro_solicitud, fecha_apertura_folio, nro_linea, concepto, cantidad, precio_unitario)
+             VALUES ($1, $2, 1, $3, 1, $4)`,
+            [nro_solicitud, insertFolio.rows[0].fecha_apertura, servData.rows[0].descripcion_detallada, servData.rows[0].precio_base]
+        );
+        // --------------------------------------------------
+
         // 3. Registrar Acompañantes temporales (HU-11)
         const acompanantesGuardados = [];
         if (acompanantes && acompanantes.length > 0) {
@@ -126,12 +141,37 @@ const getRequests = async (req, res, next) => {
         const cedula_miembro = req.user.cedula;
         const userRoles = req.user.roles || [];
 
-        let query = `SELECT * FROM Solicitud_Servicio ORDER BY fecha_creacion DESC`;
+        let query = `
+          SELECT
+            ss.*, 
+            s.descripcion_detallada AS servicio,
+            s.nombre_categoria     AS categoria,
+            COALESCE(ed.nombre_sede, 'Sin sede asignada') AS sede,
+            COALESCE(s.precio_base, 0) AS monto_usd
+          FROM Solicitud_Servicio ss
+          JOIN Servicio s ON s.codigo_servicio = ss.codigo_servicio
+          LEFT JOIN Espacio_fisico ef ON ef.nro_identificador = ss.nro_identificador_espacio
+          LEFT JOIN Edificacion ed ON ed.nombre_edificacion = ef.nombre_edificacion
+          ORDER BY ss.fecha_creacion DESC
+        `;
         let params = [];
 
         // Si no es admin o personal administrativo, solo ve sus propias solicitudes
         if (!userRoles.includes('Admin') && !userRoles.includes('Personal_Administrativo')) {
-            query = `SELECT * FROM Solicitud_Servicio WHERE cedula_miembro = $1 ORDER BY fecha_creacion DESC`;
+            query = `
+              SELECT
+                ss.*, 
+                s.descripcion_detallada AS servicio,
+                s.nombre_categoria     AS categoria,
+                COALESCE(ed.nombre_sede, 'Sin sede asignada') AS sede,
+                COALESCE(s.precio_base, 0) AS monto_usd
+              FROM Solicitud_Servicio ss
+              JOIN Servicio s ON s.codigo_servicio = ss.codigo_servicio
+              LEFT JOIN Espacio_fisico ef ON ef.nro_identificador = ss.nro_identificador_espacio
+              LEFT JOIN Edificacion ed ON ed.nombre_edificacion = ef.nombre_edificacion
+              WHERE ss.cedula_miembro = $1
+              ORDER BY ss.fecha_creacion DESC
+            `;
             params = [cedula_miembro];
         }
 
@@ -239,13 +279,46 @@ const completeStep = async (req, res, next) => {
             siguientePaso = nextRes.rows[0];
             mensajeEstado = `Paso ${pasoActualNum} finalizado. Liberado automáticamente el Paso ${pasoActualNum + 1}.`;
         } else {
+            // 1. Cerramos la solicitud
             await client.query(
                 `UPDATE Solicitud_Servicio
                  SET estatus_general = 'completado', fecha_cierre = CURRENT_TIMESTAMP
                  WHERE nro_solicitud = $1;`,
                 [nro_solicitud]
             );
-            mensajeEstado = `Paso ${pasoActualNum} finalizado. ¡Trámite completado en su totalidad!`;
+
+            // 2. HU-33: Generación Automática de Factura
+            const folioQuery = await client.query(
+                `SELECT fecha_apertura FROM Folio_Consumo WHERE nro_solicitud = $1 LIMIT 1`, 
+                [nro_solicitud]
+            );
+
+            if (folioQuery.rows.length > 0) {
+                const fecha_apertura = folioQuery.rows[0].fecha_apertura;
+                
+                const sumaRes = await client.query(
+                    `SELECT COALESCE(SUM((cantidad * precio_unitario) + impuestos), 0) AS total_deuda 
+                     FROM Linea_Cargo WHERE nro_solicitud = $1 AND fecha_apertura_folio = $2`,
+                    [nro_solicitud, fecha_apertura]
+                );
+                
+                const totalDeuda = parseFloat(sumaRes.rows[0].total_deuda);
+                
+                if (totalDeuda > 0) {
+                    // Evita duplicar la factura si ya se generó en el Checkout
+                    const facCheck = await client.query(`SELECT 1 FROM Factura WHERE nro_solicitud = $1`, [nro_solicitud]);
+                    if (facCheck.rows.length === 0) { 
+                        const solRes = await client.query(`SELECT cedula_miembro FROM Solicitud_Servicio WHERE nro_solicitud = $1`, [nro_solicitud]);
+                        await client.query(`
+                            INSERT INTO Factura (
+                                nro_solicitud, fecha_apertura_folio, saldo, estatus, cedula_titular
+                            ) VALUES ($1, $2, $3, 'Pendiente', $4);
+                        `, [nro_solicitud, fecha_apertura, totalDeuda, solRes.rows[0].cedula_miembro]);
+                    }
+                }
+            }
+
+            mensajeEstado = `Paso ${pasoActualNum} finalizado. ¡Trámite completado y Factura generada automáticamente!`;
         }
 
         await client.query('COMMIT');

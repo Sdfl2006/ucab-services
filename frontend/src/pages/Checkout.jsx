@@ -45,42 +45,35 @@ export default function Checkout() {
       return;
     }
 
-    if (metodoPago !== 'TAI' && !referencia.trim()) {
-      setError('Por favor ingrese el número de referencia o confirmación bancaria de su transacción.');
-      return;
-    }
-
     setIsProcessing(true);
-
     try {
-      const invoicePayload = {
-        nro_solicitud: orden?.nroSolicitud,
-        fecha_apertura: new Date().toISOString(),
-        rif_corporativo: 'J-00012255-5',
-        razon_social_corporativa: 'Universidad Católica Andrés Bello',
-      };
+      let numeroControl = orden.nroControl;
 
-      let invoiceData = null;
-      try {
-        const response = await paymentService.generateInvoice(invoicePayload);
-        invoiceData = response?.data ?? response;
-      } catch (err) {
-        console.warn('No se pudo generar la factura backend.', err);
+      // 1. Si es una solicitud nueva (no venimos del botón "Pagar Saldo"), generamos la factura
+      if (!numeroControl) {
+        const invoicePayload = {
+          nro_solicitud: orden?.nroSolicitud,
+          fecha_apertura: orden?.fechaCreacion, 
+          rif_corporativo: 'J-00012255-5',
+          razon_social_corporativa: 'Universidad Católica Andrés Bello',
+        };
+        const resInvoice = await paymentService.generateInvoice(invoicePayload);
+        const invoiceData = resInvoice?.data ?? resInvoice;
+        numeroControl = invoiceData.nro_control;
       }
 
-      const facturaCompletada = {
-        ...orden,
-        nroTransaccion: Math.floor(1000 + Math.random() * 9000).toString(),
-        nroControl: invoiceData?.nro_control || invoiceData?.nroControl || `00-${Math.floor(100000 + Math.random() * 900000)}`,
-        fechaEmision: new Date().toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-        metodoPago,
-        referencia: referencia || 'NFC-TAI-CHIP-9901',
-        estatusFactura: invoiceData?.estatus || 'PAGADA',
-      };
+      // 2. Registrar el PAGO REAL en backend
+      // CORRECCIÓN CLAVE: El backend evalúa la deuda en USD. Pasamos orden.montoUsd
+      await paymentService.pagarPagoMovil({
+        nro_control_factura: numeroControl,
+        monto: orden.montoUsd, // <-- ENVIAMOS EL MONTO EN LA MONEDA BASE
+        nro_telefono: '04141234567',
+        banco_origen: metodoPago === 'ZELLE' ? 'Zelle / Divisas' : 'Banca en Línea',
+        nro_referencia: referencia || '12345678'
+      });
 
-      localStorage.setItem('ucab_last_invoice', JSON.stringify(facturaCompletada));
       localStorage.removeItem('ucab_pending_order');
-      navigate('/factura/comprobante');
+      navigate(`/factura/comprobante?nroControl=${numeroControl}`);
     } catch (err) {
       setError(err.friendlyMessage || 'Ocurrió un error al procesar el pago.');
     } finally {

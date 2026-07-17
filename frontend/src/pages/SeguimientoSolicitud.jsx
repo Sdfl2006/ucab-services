@@ -13,6 +13,10 @@ const ESTATUS_PASO_BADGE = {
   pendiente: 'default',
 };
 
+function normalizeEstatusPaso(estatus) {
+  return String(estatus || '').trim().toLowerCase();
+}
+
 function formatFecha(valor) {
   if (!valor) return '—';
   return new Date(valor).toLocaleString('es-VE', {
@@ -93,7 +97,9 @@ export default function SeguimientoSolicitud() {
   }
 
   const { solicitud, eficiencia_operativa, acompanantes_vinculados = [], linea_de_tiempo_workflow = [] } = data;
-  const pasoActivo = linea_de_tiempo_workflow.find((p) => p.estatus === 'en progreso');
+  const pasoAccionable = linea_de_tiempo_workflow.find(
+    (paso) => normalizeEstatusPaso(paso.estatus) !== 'completado'
+  );
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 animate-fadeIn">
@@ -127,35 +133,40 @@ export default function SeguimientoSolicitud() {
 
       <Card title="Línea de tiempo del trámite" subtitle={`${eficiencia_operativa.horas_totales_registradas} horas registradas en total`}>
         <ol className="space-y-4">
-          {linea_de_tiempo_workflow.map((paso) => (
-            <li key={paso.nro_paso} className="flex gap-4">
-              <div className="flex flex-col items-center pt-1">
-                <span className={`w-3 h-3 rounded-full ${paso.estatus === 'completado' ? 'bg-emerald-500' : paso.estatus === 'en progreso' ? 'bg-ucab-blue' : 'bg-gray-300'}`} />
-                {paso.nro_paso !== linea_de_tiempo_workflow.length && <span className="w-px flex-1 bg-gray-200 mt-1" />}
-              </div>
-              <div className="flex-1 pb-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-bold text-sm text-gray-800">Paso {paso.nro_paso} · {paso.descripcion}</p>
-                  <Badge label={paso.estatus} status={ESTATUS_PASO_BADGE[paso.estatus] || 'default'} size="sm" />
+          {linea_de_tiempo_workflow.map((paso) => {
+            const estatusNormalizado = normalizeEstatusPaso(paso.estatus);
+            const esPasoAccionable = pasoAccionable?.nro_paso === paso.nro_paso;
+
+            return (
+              <li key={paso.nro_paso} className="flex gap-4">
+                <div className="flex flex-col items-center pt-1">
+                  <span className={`w-3 h-3 rounded-full ${estatusNormalizado === 'completado' ? 'bg-emerald-500' : estatusNormalizado === 'en progreso' ? 'bg-ucab-blue' : 'bg-gray-300'}`} />
+                  {paso.nro_paso !== linea_de_tiempo_workflow.length && <span className="w-px flex-1 bg-gray-200 mt-1" />}
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Inicio: {formatFecha(paso.fecha_hora_inicio)} · Fin: {formatFecha(paso.fecha_hora_fin)}
-                  {paso.cedula_admin && ` · Responsable: ${paso.cedula_admin}`}
-                </p>
-                {esPersonalOperativo && paso.estatus === 'en progreso' && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="mt-2 font-semibold"
-                    loading={completandoPaso}
-                    onClick={() => handleCompletarPaso(paso.nro_paso)}
-                  >
-                    Marcar paso como completado
-                  </Button>
-                )}
-              </div>
-            </li>
-          ))}
+                <div className="flex-1 pb-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-bold text-sm text-gray-800">Paso {paso.nro_paso} · {paso.descripcion}</p>
+                    <Badge label={paso.estatus} status={ESTATUS_PASO_BADGE[estatusNormalizado] || 'default'} size="sm" />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Inicio: {formatFecha(paso.fecha_hora_inicio)} · Fin: {formatFecha(paso.fecha_hora_fin)}
+                    {paso.cedula_admin && ` · Responsable: ${paso.cedula_admin}`}
+                  </p>
+                  {esPersonalOperativo && esPasoAccionable && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="mt-2 font-semibold"
+                      loading={completandoPaso}
+                      onClick={() => handleCompletarPaso(paso.nro_paso)}
+                    >
+                      Marcar paso como completado
+                    </Button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
           {linea_de_tiempo_workflow.length === 0 && (
             <p className="text-sm text-gray-400">Esta solicitud aún no tiene pasos registrados.</p>
           )}

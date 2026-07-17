@@ -88,7 +88,8 @@ const Dashboard = () => {
           <Card title="Billetera TAI" subtitle="Estado de cuenta virtual">
              <div className="bg-gradient-to-r from-ucab-blue to-ucab-green p-6 rounded-xl text-white mt-4">
                 <p className="text-xs font-semibold opacity-80 uppercase tracking-widest mb-1">Saldo Disponible</p>
-                <p className="text-3xl font-black">$0.00 USD</p>
+                {/* Se reemplaza el "$0.00 USD" estático por el saldo real del usuario */}
+                <p className="text-3xl font-black">${Number(user?.saldo || 0).toFixed(2)} USD</p>
              </div>
           </Card>
         </div>

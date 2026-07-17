@@ -22,7 +22,7 @@ router.post('/facturas', generateInvoice);
 // Rutas de liquidación multicanal (HU-37 a HU-41)
 router.post('/criptomoneda', processCryptoPayment);
 router.post('/tarjeta', authorizeRoles('Admin', 'Personal_Administrativo'), processCardPayment);
-router.post('/pago-movil', authorizeRoles('Admin', 'Personal_Administrativo'), processMobilePayment);
+router.post('/pago-movil', processMobilePayment);
 router.post('/efectivo', authorizeRoles('Admin', 'Personal_Administrativo'), processCashPayment);
 router.post('/tai', authorizeRoles('Admin', 'Personal_Administrativo'), processTAIPayment);
 

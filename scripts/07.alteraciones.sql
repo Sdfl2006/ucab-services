@@ -58,15 +58,33 @@ BEFORE INSERT OR UPDATE ON Tarifa
 FOR EACH ROW
 EXECUTE FUNCTION fn_verificar_limite_tarifa();
 
--- ----------------------------------------------------------------------------
--- PRUEBA RAPIDA
--- ----------------------------------------------------------------------------
--- Debe fallar (SRV-004 es Deporte, limite 300, sede Guayana ajuste 0.85 -> max 255)
--- INSERT INTO Tarifa (codigo_servicio, id, fecha_inicio_vigencia, perfil_solicitante, monto)
---   VALUES ('SRV-004', 99, CURRENT_DATE, 'público externo', 500.00);
+ALTER TABLE Solicitud_Servicio 
+ADD CONSTRAINT chk_estatus_general_solicitud 
+CHECK (estatus_general IN ('en_proceso', 'completado'));
 
--- Debe fallar (mismo espacio, mismo bloque horario que otra solicitud activa)
--- UPDATE Solicitud_Servicio SET hora_inicio = '2026-07-01 16:00', hora_fin = '2026-07-01 18:00'
---   WHERE nro_solicitud = 5;
--- INSERT INTO Solicitud_Servicio (cedula_miembro, codigo_servicio, nro_identificador_espacio, hora_inicio, hora_fin)
---   VALUES ('V-30111222','SRV-004','GUY-DEP-CF1','2026-07-01 17:00','2026-07-01 19:00');
+CREATE OR REPLACE FUNCTION trg_actualizar_saldo_factura()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Actualizamos el estatus y el saldo de forma simultánea para no violar el CHECK
+    UPDATE Factura
+    SET 
+        estatus = CASE 
+            WHEN (saldo - NEW.monto) <= 0 THEN 'Pagada' 
+            ELSE 'Pago_Parcial' 
+        END,
+        saldo = CASE 
+            WHEN (saldo - NEW.monto) < 0 THEN 0 
+            ELSE (saldo - NEW.monto) 
+        END
+    WHERE nro_control = NEW.nro_control_factura;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 3. Enlazar el trigger a la tabla Pago
+DROP TRIGGER IF EXISTS trg_pago_factura ON Pago;
+CREATE TRIGGER trg_pago_factura
+AFTER INSERT ON Pago
+FOR EACH ROW
+EXECUTE FUNCTION trg_actualizar_saldo_factura();

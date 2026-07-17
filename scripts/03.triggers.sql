@@ -62,3 +62,4 @@ CREATE TRIGGER trg_registrar_fin_paso
 BEFORE UPDATE ON Paso_Actividad
 FOR EACH ROW
 EXECUTE FUNCTION registrar_fin_paso();
+

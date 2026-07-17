@@ -10,11 +10,116 @@ const getInvoices = async (req, res, next) => {
         const cedula = req.user.cedula;
         const roles = req.user.roles || [];
 
-        let query = `SELECT * FROM Factura ORDER BY fecha_emision DESC`;
+        let query = `
+          SELECT
+            f.*,
+            s.descripcion_detallada AS servicio,
+            s.nombre_categoria AS categoria,
+            COALESCE(ed.nombre_sede, 'Sin sede asignada') AS sede,
+            COALESCE(fa.total_linea, f.saldo) AS monto_usd,
+            COALESCE(fa.total_linea, f.saldo) AS monto_bs,
+            COALESCE(m.nombres || ' ' || m.apellidos, 'Estudiante UCAB') AS solicitante,
+            m.cedula AS cedula_solicitante,
+            m.correo AS correo_solicitante,
+            COALESCE(pago.metodo_pago, 'Sin pago registrado') AS metodo_pago,
+            pago.referencia
+          FROM Factura f
+          JOIN Solicitud_Servicio ss ON ss.nro_solicitud = f.nro_solicitud
+          JOIN Servicio s ON s.codigo_servicio = ss.codigo_servicio
+          LEFT JOIN Miembro_comunidad m ON m.cedula = ss.cedula_miembro
+          LEFT JOIN Espacio_fisico ef ON ef.nro_identificador = ss.nro_identificador_espacio
+          LEFT JOIN Edificacion ed ON ed.nombre_edificacion = ef.nombre_edificacion
+          LEFT JOIN (
+            SELECT lc.nro_solicitud, lc.fecha_apertura_folio,
+                   SUM((lc.cantidad * lc.precio_unitario) + lc.impuestos) AS total_linea
+            FROM Linea_Cargo lc
+            GROUP BY lc.nro_solicitud, lc.fecha_apertura_folio
+          ) fa ON fa.nro_solicitud = f.nro_solicitud AND fa.fecha_apertura_folio = f.fecha_apertura_folio
+          LEFT JOIN LATERAL (
+            SELECT
+              p.nro_control_factura,
+              p.fecha_pago,
+              CASE
+                WHEN pt.nro_control_factura IS NOT NULL THEN 'Tarjeta'
+                WHEN pm.nro_control_factura IS NOT NULL THEN 'Pago Móvil'
+                WHEN pe.nro_control_factura IS NOT NULL THEN 'Efectivo'
+                WHEN t.nro_control_factura IS NOT NULL THEN 'Billetera TAI'
+                WHEN z.nro_control_factura IS NOT NULL THEN 'Zelle'
+                WHEN c.nro_control_factura IS NOT NULL THEN 'Criptomoneda'
+                ELSE 'Pago'
+              END AS metodo_pago,
+              COALESCE(pm.nro_referencia, z.codigo_transaccion, c.hash_txid, pt.nro_tarjeta, t.uid_chip, p.fecha_pago::text) AS referencia
+            FROM Pago p
+            LEFT JOIN Pago_Presencial pp ON pp.nro_control_factura = p.nro_control_factura AND pp.fecha_pago = p.fecha_pago
+            LEFT JOIN Pago_Tarjeta pt ON pt.nro_control_factura = p.nro_control_factura AND pt.fecha_pago = p.fecha_pago
+            LEFT JOIN Pago_Movil pm ON pm.nro_control_factura = p.nro_control_factura AND pm.fecha_pago = p.fecha_pago
+            LEFT JOIN Pago_Efectivo pe ON pe.nro_control_factura = p.nro_control_factura AND pe.fecha_pago = p.fecha_pago
+            LEFT JOIN Pago_TAI t ON t.nro_control_factura = p.nro_control_factura AND t.fecha_pago = p.fecha_pago
+            LEFT JOIN Pago_Zelle z ON z.nro_control_factura = p.nro_control_factura AND z.fecha_pago = p.fecha_pago
+            LEFT JOIN Pago_Criptomoneda c ON c.nro_control_factura = p.nro_control_factura AND c.fecha_pago = p.fecha_pago
+            WHERE p.nro_control_factura = f.nro_control
+            ORDER BY p.fecha_pago DESC
+            LIMIT 1
+          ) pago ON TRUE
+          ORDER BY f.fecha_emision DESC;
+        `;
         let params = [];
 
-        if (!roles.includes('Admin') && !roles.includes('Personal_Administrativo')) {
-            query = `SELECT * FROM Factura WHERE cedula_titular = $1 ORDER BY fecha_emision DESC`;
+        if (!roles.includes('Admin') && !roles.includes('Personal_Administrativo') && !roles.includes('Cajero principal')) {
+            query = `
+              SELECT
+                f.*,
+                s.descripcion_detallada AS servicio,
+                s.nombre_categoria AS categoria,
+                COALESCE(ed.nombre_sede, 'Sin sede asignada') AS sede,
+                COALESCE(fa.total_linea, f.saldo) AS monto_usd,
+                COALESCE(fa.total_linea, f.saldo) AS monto_bs,
+                COALESCE(m.nombres || ' ' || m.apellidos, 'Estudiante UCAB') AS solicitante,
+                m.cedula AS cedula_solicitante,
+                m.correo AS correo_solicitante,
+                COALESCE(pago.metodo_pago, 'Sin pago registrado') AS metodo_pago,
+                pago.referencia
+              FROM Factura f
+              JOIN Solicitud_Servicio ss ON ss.nro_solicitud = f.nro_solicitud
+              JOIN Servicio s ON s.codigo_servicio = ss.codigo_servicio
+              LEFT JOIN Miembro_comunidad m ON m.cedula = ss.cedula_miembro
+              LEFT JOIN Espacio_fisico ef ON ef.nro_identificador = ss.nro_identificador_espacio
+              LEFT JOIN Edificacion ed ON ed.nombre_edificacion = ef.nombre_edificacion
+              LEFT JOIN (
+                SELECT lc.nro_solicitud, lc.fecha_apertura_folio,
+                       SUM((lc.cantidad * lc.precio_unitario) + lc.impuestos) AS total_linea
+                FROM Linea_Cargo lc
+                GROUP BY lc.nro_solicitud, lc.fecha_apertura_folio
+              ) fa ON fa.nro_solicitud = f.nro_solicitud AND fa.fecha_apertura_folio = f.fecha_apertura_folio
+              LEFT JOIN LATERAL (
+                SELECT
+                  p.nro_control_factura,
+                  p.fecha_pago,
+                  CASE
+                    WHEN pt.nro_control_factura IS NOT NULL THEN 'Tarjeta'
+                    WHEN pm.nro_control_factura IS NOT NULL THEN 'Pago Móvil'
+                    WHEN pe.nro_control_factura IS NOT NULL THEN 'Efectivo'
+                    WHEN t.nro_control_factura IS NOT NULL THEN 'Billetera TAI'
+                    WHEN z.nro_control_factura IS NOT NULL THEN 'Zelle'
+                    WHEN c.nro_control_factura IS NOT NULL THEN 'Criptomoneda'
+                    ELSE 'Pago'
+                  END AS metodo_pago,
+                  COALESCE(pm.nro_referencia, z.codigo_transaccion, c.hash_txid, pt.nro_tarjeta, t.uid_chip, p.fecha_pago::text) AS referencia
+                FROM Pago p
+                LEFT JOIN Pago_Presencial pp ON pp.nro_control_factura = p.nro_control_factura AND pp.fecha_pago = p.fecha_pago
+                LEFT JOIN Pago_Tarjeta pt ON pt.nro_control_factura = p.nro_control_factura AND pt.fecha_pago = p.fecha_pago
+                LEFT JOIN Pago_Movil pm ON pm.nro_control_factura = p.nro_control_factura AND pm.fecha_pago = p.fecha_pago
+                LEFT JOIN Pago_Efectivo pe ON pe.nro_control_factura = p.nro_control_factura AND pe.fecha_pago = p.fecha_pago
+                LEFT JOIN Pago_TAI t ON t.nro_control_factura = p.nro_control_factura AND t.fecha_pago = p.fecha_pago
+                LEFT JOIN Pago_Zelle z ON z.nro_control_factura = p.nro_control_factura AND z.fecha_pago = p.fecha_pago
+                LEFT JOIN Pago_Criptomoneda c ON c.nro_control_factura = p.nro_control_factura AND c.fecha_pago = p.fecha_pago
+                WHERE p.nro_control_factura = f.nro_control
+                ORDER BY p.fecha_pago DESC
+                LIMIT 1
+              ) pago ON TRUE
+              WHERE f.cedula_titular = $1
+              ORDER BY f.fecha_emision DESC;
+            `;
             params = [cedula];
         }
 
@@ -33,8 +138,7 @@ const getInvoices = async (req, res, next) => {
 const generateInvoice = async (req, res, next) => {
     const client = await pool.connect();
     try {
-        const { nro_solicitud, fecha_apertura, rif_corporativo, razon_social_corporativa } = req.body;
-
+        const { nro_solicitud, rif_corporativo, razon_social_corporativa } = req.body;
         await client.query('BEGIN');
 
         // 1. Obtener la solicitud para saber quién es el titular
@@ -45,14 +149,27 @@ const generateInvoice = async (req, res, next) => {
             throw error;
         }
 
-        // 2. Sumar las líneas de cargo del folio
-        const sumaRes = await client.query(
-            `SELECT COALESCE(SUM((cantidad * precio_unitario) + impuestos), 0) AS total_deuda
-             FROM Linea_Cargo WHERE nro_solicitud = $1 AND fecha_apertura_folio = $2`,
-            [nro_solicitud, fecha_apertura]
+        // 1.5 NUEVO: Obtenemos el folio real directo de la BD para ignorar la zona horaria del frontend
+        const folioRes = await client.query(
+            `SELECT fecha_apertura FROM Folio_Consumo WHERE nro_solicitud = $1 ORDER BY fecha_apertura DESC LIMIT 1`, 
+            [nro_solicitud]
         );
-        const totalDeuda = parseFloat(sumaRes.rows[0].total_deuda);
+        
+        if (folioRes.rows.length === 0) {
+            const error = new Error('No se encontró un folio de consumo para esta solicitud.');
+            error.statusCode = 404;
+            throw error;
+        }
+        const fecha_apertura_real = folioRes.rows[0].fecha_apertura;
 
+        // 2. Sumar las líneas de cargo del folio usando la fecha_apertura_real
+        const sumaRes = await client.query(
+            `SELECT COALESCE(SUM((cantidad * precio_unitario) + impuestos), 0) AS total_deuda 
+             FROM Linea_Cargo WHERE nro_solicitud = $1 AND fecha_apertura_folio = $2`,
+            [nro_solicitud, fecha_apertura_real]
+        );
+
+        const totalDeuda = parseFloat(sumaRes.rows[0].total_deuda);
         if (totalDeuda <= 0) {
             const error = new Error('No se puede generar una factura para un folio sin cargos acumulados.');
             error.statusCode = 400;
@@ -67,7 +184,7 @@ const generateInvoice = async (req, res, next) => {
             ) VALUES ($1, $2, $3, 'Pendiente', $4, $5, $6) RETURNING *;
         `;
         const { rows } = await client.query(insertQuery, [
-            nro_solicitud, fecha_apertura, totalDeuda, solRes.rows[0].cedula_miembro,
+            nro_solicitud, fecha_apertura_real, totalDeuda, solRes.rows[0].cedula_miembro, 
             rif_corporativo || null, razon_social_corporativa || null
         ]);
 
@@ -92,6 +209,12 @@ const registrarPagoRaiz = async (client, nro_control_factura, monto) => {
             `INSERT INTO Pago (nro_control_factura, fecha_pago, monto) VALUES ($1, $2, $3);`,
             [nro_control_factura, fecha_pago, monto]
         );
+        await client.query(`
+            UPDATE Factura 
+            SET estatus = CASE WHEN saldo <= 0 THEN 'Pagada' ELSE 'Pago_Parcial' END 
+            WHERE nro_control = $1
+        `, [nro_control_factura]);
+        
         return { nro_control_factura, fecha_pago };
     } catch (error) {
         // Atrapamos la excepción 'RAISE EXCEPTION' lanzada por el Trigger de DB

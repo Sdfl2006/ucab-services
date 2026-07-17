@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import paymentService from '../services/paymentService';
 import DataTable from '../components/table/DataTable';
 import Badge from '../components/common/Badge';
 import Button from '../components/common/Button';
 
 export default function PaymentsHistory() {
+  const { user } = useAuth();
   const [pagos, setPagos] = useState([]);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
@@ -20,11 +22,18 @@ export default function PaymentsHistory() {
           id: invoice.id || invoice.nro_control || `${invoice.nro_solicitud}`,
           nroControl: invoice.nro_control || invoice.nroControl || 'N/A',
           servicio: invoice.servicio || `Solicitud ${invoice.nro_solicitud || ''}`,
+          categoria: invoice.categoria || 'N/A',
+          sede: invoice.sede || 'N/A',
           fecha: invoice.fecha_emision ? new Date(invoice.fecha_emision).toLocaleDateString('es-VE') : '',
-          metodo: invoice.metodo || invoice.metodo_pago || 'N/A',
+          metodo: invoice.metodo_pago || invoice.metodo || 'N/A',
           ref: invoice.referencia || invoice.nro_control || 'N/A',
-          montoUsd: Number(invoice.monto_usd ?? invoice.saldo ?? 0),
+          montoUsd: Number(invoice.saldo ?? invoice.monto_usd ?? 0),
           estatus: invoice.estatus || 'PENDIENTE',
+          solicitante: invoice.solicitante,
+          cedulaSolicitante: invoice.cedula_solicitante,
+          correoSolicitante: invoice.correo_solicitante,
+          fechaEmision: invoice.fecha_emision || invoice.fecha,
+          referencia: invoice.referencia || invoice.ref || invoice.nro_control || 'N/A',
         })));
         setStatus('success');
       } catch (err) {
@@ -55,6 +64,18 @@ export default function PaymentsHistory() {
       ),
     },
     {
+      key: 'categoria',
+      label: 'Categoría',
+      sortable: true,
+      render: (row) => <span className="text-sm text-gray-700">{row.categoria}</span>,
+    },
+    {
+      key: 'sede',
+      label: 'Sede',
+      sortable: true,
+      render: (row) => <span className="text-sm text-gray-700">{row.sede}</span>,
+    },
+    {
       key: 'metodo',
       label: 'Método y Ref',
       sortable: true,
@@ -65,14 +86,15 @@ export default function PaymentsHistory() {
         </div>
       ),
     },
-    {
+      {
       key: 'montoUsd',
-      label: 'Importe Total',
+      label: 'Deuda Pendiente',
       sortable: true,
       render: (row) => (
         <div>
-          <p className="font-black text-gray-900">${row.montoUsd.toFixed(2)} USD</p>
-          <p className="text-[11px] text-gray-500">Bs. {(row.montoUsd * 1).toLocaleString('es-VE')}</p>
+          {/* Mostramos el SALDO restante, no el total original */}
+          <p className="font-black text-gray-900">${Number(row.montoUsd).toFixed(2)} USD</p>
+          <p className="text-[11px] text-gray-500">Total servicio: ${(row.montoUsd).toFixed(2)}</p>
         </div>
       ),
     },
@@ -80,17 +102,46 @@ export default function PaymentsHistory() {
       key: 'estatus',
       label: 'Estado Fiscal',
       sortable: true,
-      render: (row) => <Badge label={row.estatus} status={row.estatus === 'PAGADA' ? 'success' : 'warning'} size="sm" />, 
+      render: (row) => {
+        const estado = String(row.estatus || '').toUpperCase();
+        return <Badge label={estado} status={estado === 'PAGADA' ? 'success' : 'warning'} size="sm" />;
+      },
     },
     {
       key: 'acciones',
-      label: 'Comprobante',
+      label: 'Acción',
       sortable: false,
-      render: () => (
-        <Button size="sm" variant="secondary" onClick={() => navigate('/factura/comprobante')}>
-          Ver Factura
-        </Button>
-      ),
+      render: (row) => {
+        const isPaid = String(row.estatus || '').toUpperCase() === 'PAGADA';
+        return (
+          <Button
+            size="sm"
+            variant={isPaid ? 'secondary' : 'primary'}
+            onClick={() => {
+              if (isPaid) {
+                // Si ya pagó, va a ver su comprobante
+                navigate(`/factura/comprobante?nroControl=${encodeURIComponent(row.nroControl)}`, { state: { invoice: row } });
+              } else {
+                // Si debe dinero, armamos el carrito con el SALDO RESTANTE y lo mandamos a pagar
+                const pendingOrder = {
+                  nroControl: row.nroControl,
+                  nroSolicitud: row.id,
+                  servicio: row.servicio,
+                  categoria: row.categoria,
+                  sede: row.sede,
+                  montoUsd: Number(row.montoUsd), 
+                  montoBs: Number(row.montoUsd) * 55.40,
+                  fechaCreacion: new Date().toISOString()
+                };
+                localStorage.setItem('ucab_pending_order', JSON.stringify(pendingOrder));
+                navigate('/checkout');
+              }
+            }}
+          >
+            {isPaid ? 'Ver Factura' : 'Pagar Saldo'}
+          </Button>
+        );
+      },
     },
   ];
 
@@ -108,8 +159,8 @@ export default function PaymentsHistory() {
         <div className="bg-white/10 p-5 rounded-2xl border border-white/20 flex items-center gap-4 shrink-0 w-full sm:w-auto justify-between">
           <div>
             <span className="text-xs text-gray-300 font-semibold block">SALDO VIRTUAL TAI:</span>
-            <span className="text-2xl font-black text-white">$45.00 USD</span>
-            <p className="text-[10px] text-emerald-200">~ Bs. {Math.round(45 * 1).toLocaleString('es-VE')}</p>
+            <span className="text-2xl font-black text-white">${Number(user?.saldo || 0).toFixed(2)} USD</span>
+            <p className="text-[10px] text-emerald-200">~ Bs. {Math.round(Number(user?.saldo || 0) * 1).toLocaleString('es-VE')}</p>
           </div>
           <Button size="sm" variant="accent" onClick={() => alert('Para recargar su Billetera TAI acerque su carnet a las taquillas de caja o transfiera por Zelle/Pago Móvil.') }>
             + Recargar

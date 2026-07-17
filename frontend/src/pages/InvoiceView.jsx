@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import paymentService from '../services/paymentService';
 import Button from '../components/common/Button';
@@ -8,59 +8,59 @@ import Badge from '../components/common/Badge';
 export default function InvoiceView() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [factura, setFactura] = useState(null);
 
   useEffect(() => {
+    const selectedInvoice = location.state?.invoice;
+    const selectedNroControl = searchParams.get('nroControl') || selectedInvoice?.nroControl || selectedInvoice?.nro_control;
+
+    const buildFactura = (invoice) => ({
+      id: invoice.id || invoice.nro_control || `${invoice.nro_solicitud}`,
+      nroTransaccion: invoice.nro_control || invoice.id || invoice.nroControl || 'N/A',
+      nroControl: invoice.nro_control || invoice.id || invoice.nroControl || '00-000000',
+      servicio: invoice.servicio || `Solicitud ${invoice.nro_solicitud || ''}`,
+      categoria: invoice.categoria || 'Servicio UCAB',
+      sede: invoice.sede || invoice.nombre_sede || user?.sede || 'Montalbán',
+      fechaEjecucion: invoice.fecha_ejecucion || invoice.fecha_emision || invoice.fecha || 'Pendiente',
+      fechaEmision: invoice.fecha_emision
+        ? new Date(invoice.fecha_emision).toLocaleString('es-VE')
+        : invoice.fecha
+        ? new Date(invoice.fecha).toLocaleString('es-VE')
+        : new Date().toLocaleString('es-VE'),
+      montoUsd: Number(invoice.monto_usd ?? invoice.montoUsd ?? invoice.saldo ?? 0),
+      montoBs: Number(invoice.monto_bs ?? invoice.montoBs ?? invoice.monto_usd ?? invoice.saldo ?? 0),
+      metodoPago: invoice.metodo_pago || invoice.metodo || 'Pago',
+      referencia: invoice.referencia || invoice.ref || invoice.nro_control || 'N/A',
+      solicitante: invoice.solicitante,
+      cedulaSolicitante: invoice.cedula_solicitante,
+      correoSolicitante: invoice.correo_solicitante,
+      estatusFactura: invoice.estatus || invoice.estatusFactura || 'PENDIENTE',
+    });
+
     const cargarFactura = async () => {
       try {
         const invoices = await paymentService.getInvoices();
-        if (invoices && invoices.length > 0) {
-          const invoice = invoices[0];
-          setFactura({
-            id: invoice.id || invoice.nro_control || `${invoice.nro_solicitud}`,
-            nroTransaccion: invoice.nro_control || invoice.id || 'N/A',
-            nroControl: invoice.nro_control || invoice.id || '00-000000',
-            servicio: invoice.servicio || `Solicitud ${invoice.nro_solicitud || ''}`,
-            categoria: invoice.categoria || 'Servicio UCAB',
-            sede: invoice.nombre_sede || user?.sede || 'Montalbán',
-            fechaEjecucion: invoice.fecha_ejecucion || 'Pendiente',
-            fechaEmision: invoice.fecha_emision ? new Date(invoice.fecha_emision).toLocaleString('es-VE') : new Date().toLocaleString('es-VE'),
-            montoUsd: Number(invoice.monto_usd ?? invoice.saldo ?? 0),
-            montoBs: Number(invoice.monto_bs ?? invoice.saldo ?? 0),
-            metodoPago: invoice.metodo || invoice.metodo_pago || 'Pago',
-            referencia: invoice.referencia || invoice.nro_control || 'N/A',
-            estatusFactura: invoice.estatus || 'PENDIENTE',
-          });
+        if (selectedNroControl && invoices) {
+          // Busca específicamente la factura que acabamos de pagar
+          const found = invoices.find((item) => String(item.nro_control) === String(selectedNroControl));
+          if (found) {
+            setFactura(buildFactura(found));
+            return;
+          }
+        } else if (selectedInvoice) {
+          setFactura(buildFactura(selectedInvoice));
           return;
         }
       } catch (err) {
-        console.warn('No se pudieron cargar las facturas desde backend.', err);
+        console.warn('Error cargando facturas.', err);
       }
-
-      const saved = localStorage.getItem('ucab_last_invoice');
-      if (saved) {
-        setFactura(JSON.parse(saved));
-      } else {
-        setFactura({
-          id: 'SOL-2026-9978',
-          nroTransaccion: '9978',
-          nroControl: '00-847291',
-          servicio: 'ALQUILER DE CANCHA DE FUTBOL',
-          categoria: 'Deportes',
-          sede: user?.sede || 'Montalbán',
-          fechaEjecucion: '15 DE MAYO, 4:00PM',
-          fechaEmision: '15 de mayo de 2026, 10:30 AM',
-          montoUsd: 20.0,
-          montoBs: 20.0,
-          metodoPago: 'PAGO MOVIL',
-          referencia: '12344567',
-          estatusFactura: 'PAGADA',
-        });
-      }
+      setFactura(null); 
     };
 
     cargarFactura();
-  }, [user]);
+  }, [user, location.key, location.search, location.state]);
 
   if (!factura) return null;
 
@@ -99,9 +99,9 @@ export default function InvoiceView() {
             </div>
             <div>
               <span className="text-gray-400 font-semibold block">CLIENTE / SOLICITANTE:</span>
-              <p className="font-bold text-gray-800">{user?.nombreCompleto || 'Estudiante UCAB'}</p>
-              <p className="text-gray-600">Cédula: {user?.cedula || 'V-31229670'}</p>
-              <p className="text-gray-600">{user?.correo}</p>
+              <p className="font-bold text-gray-800">{factura.solicitante || user?.nombreCompleto || 'Estudiante UCAB'}</p>
+              <p className="text-gray-600">Cédula: {factura.cedulaSolicitante || user?.cedula || 'V-31229670'}</p>
+              <p className="text-gray-600">{factura.correoSolicitante || user?.correo}</p>
             </div>
           </div>
 

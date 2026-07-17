@@ -5,6 +5,7 @@ import paymentService, { METODOS_TAQUILLA } from '../services/paymentService';
 import Card from '../components/common/Card';
 import Button from '../components/common/Button';
 import Input from '../components/common/Input';
+import { TASA_BCV } from '../services/mockData';
 
 // Contrato real (paymentController.js): estos 4 métodos son exclusivos de
 // caja (authorizeRoles('Admin','Personal_Administrativo') en el backend).
@@ -106,23 +107,33 @@ export default function Taquilla() {
     setResultado(null);
   }
 
+  const esMonedaNacional = metodo === METODOS_TAQUILLA.PAGO_MOVIL || (metodo === METODOS_TAQUILLA.EFECTIVO && datosMetodo.moneda_curso === 'bolívares');
   async function handleSubmit(e) {
     e.preventDefault();
     setEnviando(true);
     setError(null);
     setResultado(null);
+
     try {
       const ejecutar = SERVICIO_POR_METODO[metodo];
+      
+      // Si el cajero anotó Bolívares (Pago Móvil o Efectivo Bs), lo convertimos a Dólares
+      let montoBaseDatos = Number(monto);
+      if (esMonedaNacional) {
+        montoBaseDatos = montoBaseDatos / TASA_BCV;
+      }
+
       const pago = await ejecutar({
         nro_control_factura: nroControlFactura,
-        monto: Number(monto),
+        monto: Number(montoBaseDatos.toFixed(2)), 
         ...datosMetodo,
       });
+
       setResultado(pago);
       setMonto('');
       setDatosMetodo(valoresIniciales(metodo));
     } catch (err) {
-      setError(err.friendlyMessage || 'No se pudo procesar el pago. Verifica los datos e intenta de nuevo.');
+      setError(err.friendlyMessage || 'No se pudo procesar el pago.');
     } finally {
       setEnviando(false);
     }
@@ -145,13 +156,14 @@ export default function Taquilla() {
               required
             />
             <Input
-              label="Monto a liquidar"
+              label={`Monto a liquidar (${esMonedaNacional ? 'Bs.' : 'USD'})`}
               type="number"
               min="0.01"
               step="0.01"
               value={monto}
               onChange={(e) => setMonto(e.target.value)}
               required
+              helperText={monto ? `Equivale a amortizar: ${esMonedaNacional ? '$' + (Number(monto) / TASA_BCV).toFixed(2) : 'Bs. ' + (Number(monto) * TASA_BCV).toLocaleString('es-VE')}` : 'Monto exacto recibido en taquilla'}
             />
           </div>
 

@@ -43,15 +43,37 @@ export default function MyRequests() {
     }, {});
   }, [servicios]);
 
+  const normalizeCategoria = (categoria) => {
+    if (!categoria) return 'General';
+    const cleaned = categoria.toString().trim();
+    switch (cleaned) {
+      case 'Deporte':
+      case 'Deportes':
+        return 'Deportes';
+      case 'Salud':
+      case 'Servicios Médicos':
+        return 'Servicios Médicos';
+      case 'Cultura':
+      case 'Cultura y Eventos':
+        return 'Cultura y Eventos';
+      case 'Trámites Académicos':
+      case 'Tramites Académicos':
+        return 'Trámites Académicos';
+      default:
+        return cleaned;
+    }
+  };
+
   const solicitudesEnriquecidas = useMemo(() => {
     return solicitudes.map((solicitud) => {
       const serviciosRelacionados = serviciosMap[solicitud.codigo_servicio] || [];
       const servicioRelacionado = serviciosRelacionados.find((item) => item.nombre_sede === solicitud.sede) || serviciosRelacionados[0];
+      const categoriaRaw = servicioRelacionado?.nombre_categoria || solicitud.categoria || 'General';
 
       return {
         ...solicitud,
         servicio: servicioRelacionado?.descripcion_detallada || solicitud.codigo_servicio,
-        categoria: servicioRelacionado?.nombre_categoria || solicitud.categoria || 'General',
+        categoria: normalizeCategoria(categoriaRaw),
         montoUsd: Number(servicioRelacionado?.precio_final_sede ?? servicioRelacionado?.precio_base ?? 0),
         montoBs: Number(servicioRelacionado?.precio_final_sede ?? servicioRelacionado?.precio_base ?? 0),
         fechaEjecucion: solicitud.fecha_creacion || solicitud.fecha_ejecucion || new Date().toISOString(),
@@ -65,25 +87,7 @@ export default function MyRequests() {
     : solicitudesEnriquecidas.filter((s) => s.categoria === filtroCategoria);
 
   const getStatusVariant = (status) => {
-    switch (status) {
-      case 'Aprobado':
-      case 'aprobado':
-        return 'success';
-      case 'Pendiente':
-      case 'pendiente':
-        return 'warning';
-      case 'En Proceso':
-      case 'en_proceso':
-      case 'En proceso':
-        return 'info';
-      case 'Culminado':
-      case 'completado':
-        return 'ucab';
-      case 'Rechazado':
-        return 'error';
-      default:
-        return 'default';
-    }
+    return status === 'completado' ? 'success' : 'info';
   };
 
   const columns = [
@@ -145,11 +149,6 @@ export default function MyRequests() {
           >
             Ver Detalle
           </button>
-          {(row.estatusGeneral === 'Aprobado' || row.estatusGeneral === 'completado' || row.estatusGeneral === 'Culminado') && (
-            <Button size="sm" variant="secondary" onClick={() => navigate('/pagos')}>
-              Ver Factura
-            </Button>
-          )}
         </div>
       ),
     },
