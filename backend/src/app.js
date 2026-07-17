@@ -14,6 +14,7 @@ const beneficiaryRoutes = require('./routes/beneficiaryRoutes');
 const infrastructureRoutes = require('./routes/infrastructureRoutes');
 const jobBoardRoutes = require('./routes/jobBoardRoutes');
 const reportRoutes = require('./routes/reportRoutes');
+const initCronJobs = require('./jobs/cronWorker');
 
 const app = express();
 
@@ -37,5 +38,7 @@ app.use('/api/v1/servicios', serviceRoutes);
 app.use('/api/v1/solicitudes', requestRoutes);
 app.use('/api/v1/bolsa-trabajo', jobBoardRoutes);
 app.use('/api/v1/reportes', reportRoutes);
+
+initCronJobs();
 
 module.exports = app;
