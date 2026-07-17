@@ -18,7 +18,7 @@ BEGIN
 
     -- SEGURO: Validamos que el pago no sea mayor al saldo deudor
     IF NEW.monto > saldo_actual THEN
-        RAISE EXCEPTION 'El monto del pago (%.2f) no puede ser mayor al saldo de la factura (%.2f)', NEW.monto, saldo_actual;
+        RAISE EXCEPTION 'El monto del pago (%) no puede ser mayor al saldo de la factura (%)', NEW.monto, saldo_actual;
     END IF;
 
     -- UPDATE ÚNICO: Actualizamos saldo y estatus en la misma transacción
