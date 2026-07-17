@@ -18,6 +18,7 @@ import Taquilla from './pages/Taquilla';
 import GestionInfraestructura from './pages/GestionInfraestructura';
 import BolsaTrabajo from './pages/BolsaTrabajo';
 import GestionBeneficiarios from './pages/GestionBeneficiarios';
+import Reportes from './pages/Reportes';
 
 const PlaceholderView = ({ title }) => (
   <div className="p-8 text-center bg-white rounded-xl border border-gray-200">
@@ -59,6 +60,7 @@ export default function App() {
           <Route path="/beneficiarios" element={<GestionBeneficiarios />} />
           <Route path="/infraestructura" element={<GestionInfraestructura />} />
           <Route path="/bolsa-trabajo" element={<BolsaTrabajo />} />
+          <Route path="/reportes" element={<Reportes />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

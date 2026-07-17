@@ -87,6 +87,9 @@ const Dashboard = () => {
                 <Button onClick={() => navigate('/taquilla')} variant="primary" className="w-full justify-start shadow-sm">
                   Taquilla y Pagos Presenciales
                 </Button>
+                <Button onClick={() => navigate('/reportes')} variant="accent" className="w-full justify-start shadow-sm font-bold">
+                  Módulo de Reportes Gerenciales
+                </Button>
                 <Button onClick={() => navigate('/beneficiarios')} variant="secondary" className="w-full justify-start">
                   Directorio de Beneficiarios
                 </Button>

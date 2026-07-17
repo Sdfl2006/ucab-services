@@ -23,7 +23,8 @@ export default function Navbar() {
     ...(hasAnyRole('Admin', 'Personal_Administrativo') ? [
       { name: 'Taquilla', path: '/taquilla' },
       { name: 'Infraestructura', path: '/infraestructura' },
-      { name: 'Beneficiarios', path: '/beneficiarios' }
+      { name: 'Beneficiarios', path: '/beneficiarios' },
+      { name: 'Reportes', path: '/reportes' }
     ] : []),
   ];
 
