@@ -81,43 +81,25 @@ const generateInvoice = async (req, res, next) => {
     }
 };
 
-/**
- * Función auxiliar interna para validar y registrar la tabla raíz (Pago)
- */
-/**
- * Función auxiliar interna para validar y registrar la tabla raíz (Pago)
- * Corregida para garantizar sincronicidad exacta de microsegundos entre tablas
- */
 const registrarPagoRaiz = async (client, nro_control_factura, monto) => {
-    // 1. Validar factura
-    const facRes = await client.query(`SELECT saldo, estatus FROM Factura WHERE nro_control = $1 FOR UPDATE`, [nro_control_factura]);
-    if (facRes.rows.length === 0) {
-        const error = new Error('La factura a liquidar no existe.');
-        error.statusCode = 404;
-        throw error;
-    }
-    const { saldo, estatus } = facRes.rows[0];
-    if (estatus.toLowerCase() === 'pagada' || parseFloat(saldo) <= 0) {
-        const error = new Error('Esta factura ya se encuentra solvente y pagada en su totalidad.');
-        error.statusCode = 400;
-        throw error;
-    }
-    if (parseFloat(monto) > parseFloat(saldo)) {
-        const error = new Error(`El monto abonado (${monto}) excede el saldo pendiente de la factura (${saldo}).`);
-        error.statusCode = 400;
-        throw error;
-    }
-
-    // 2. Generamos el timestamp exacto en Node.js para evitar pérdida de microsegundos en la herencia
+    // Generamos el timestamp exacto en Node.js para las llaves compuestas
     const fecha_pago = new Date().toISOString();
 
-    // 3. Insertamos en Pago pasando explícitamente la fecha_pago
-    await client.query(
-        `INSERT INTO Pago (nro_control_factura, fecha_pago, monto) VALUES ($1, $2, $3);`,
-        [nro_control_factura, fecha_pago, monto]
-    );
-
-    return { nro_control_factura, fecha_pago };
+    try {
+        // Al insertar aquí, el Trigger de Postgres se disparará. Si el monto es mayor al saldo, 
+        // el Trigger rebotará la transacción arrojando una excepción y cancelando todo.
+        await client.query(
+            `INSERT INTO Pago (nro_control_factura, fecha_pago, monto) VALUES ($1, $2, $3);`,
+            [nro_control_factura, fecha_pago, monto]
+        );
+        return { nro_control_factura, fecha_pago };
+    } catch (error) {
+        // Atrapamos la excepción 'RAISE EXCEPTION' lanzada por el Trigger de DB
+        if (error.message.includes('no puede ser mayor al saldo')) {
+            error.statusCode = 400;
+        }
+        throw error;
+    }
 };
 
 /**

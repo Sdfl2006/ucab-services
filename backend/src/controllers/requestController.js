@@ -199,10 +199,9 @@ const completeStep = async (req, res, next) => {
             }
         }
 
-        // Marcar completado e inyectar timestamp (HU-29)
         const updateCurrentQuery = `
             UPDATE Paso_Actividad
-            SET estatus = 'completado', fecha_hora_fin = CURRENT_TIMESTAMP, cedula_admin = $1
+            SET estatus = 'completado', cedula_admin = $1
             WHERE nro_solicitud = $2 AND nro_paso = $3
             RETURNING *;
         `;
