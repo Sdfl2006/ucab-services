@@ -273,7 +273,7 @@ SELECT
     END                                            AS canal,
     -- Referencia externa: la llave para cotejar contra el extracto
     COALESCE(z.codigo_transaccion, cr.hash_txid, pm.nro_referencia,
-             t.nro_tarjeta, tai.uid_chip, ef.desgloce_denominaciones)
+             t.nro_tarjeta, tai.uid_chip, ef.desglose_denominaciones)
                                                    AS referencia_externa,
     COALESCE(cr.red_utilizada, pm.banco_origen, t.compania_emisora,
              ef.moneda_curso, tai.codigo_terminal_pos)
