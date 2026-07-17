@@ -4,7 +4,8 @@ const {
     createEdificacion,
     createEspacioFisico,
     toggleMantenimiento,
-    checkDisponibilidad
+    checkDisponibilidad,
+    getEspacios
 } = require('../controllers/infrastructureController');
 
 // Importación exacta de tu middleware de seguridad
@@ -15,6 +16,7 @@ router.use(authenticateToken);
 
 // HU-16: Cualquier miembro autenticado puede consultar la disponibilidad de un salón
 router.get('/espacios/disponibilidad', checkDisponibilidad);
+router.get('/espacios', authorizeRoles('Admin', 'Personal_Administrativo'), getEspacios); // <-- NUEVA
 
 // HU-13, HU-14, HU-15: La creación y bloqueo por mantenimiento son exclusivas de Administración
 router.post('/edificaciones', authorizeRoles('Admin', 'Personal_Administrativo'), createEdificacion);

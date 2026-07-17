@@ -17,6 +17,7 @@ import SeguimientoSolicitud from './pages/SeguimientoSolicitud';
 import Taquilla from './pages/Taquilla';
 import GestionInfraestructura from './pages/GestionInfraestructura';
 import BolsaTrabajo from './pages/BolsaTrabajo';
+import GestionBeneficiarios from './pages/GestionBeneficiarios';
 
 const PlaceholderView = ({ title }) => (
   <div className="p-8 text-center bg-white rounded-xl border border-gray-200">
@@ -55,16 +56,10 @@ export default function App() {
           <Route path="/taquilla" element={<Taquilla />} />
           <Route path="/directorio-medico" element={<MedicalDirectory />} />
           <Route path="/perfil" element={<Profile />} />
-          
+          <Route path="/beneficiarios" element={<GestionBeneficiarios />} />
           <Route path="/infraestructura" element={<GestionInfraestructura />} />
           <Route path="/bolsa-trabajo" element={<BolsaTrabajo />} />
-
-          {/* Rutas aún no implementadas (Fase 4 y 5) */}
-          <Route path="/mis-citas" element={<PlaceholderView title="Mis Citas Médicas y Académicas" />} />
-          <Route path="/soporte" element={<PlaceholderView title="Mesa de Ayuda y Soporte TI" />} />
-          <Route path="/eventos" element={<PlaceholderView title="Agenda de Eventos y Cultura" />} />
         </Route>
-
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>

@@ -190,10 +190,33 @@ const checkDisponibilidad = async (req, res, next) => {
         next(error);
     }
 };
+    // ... (arriba están tus otras funciones como checkDisponibilidad)
 
+/**
+ * @desc    Consultar todos los espacios físicos
+ * @route   GET /api/v1/infraestructura/espacios
+ * @access  Private (Admin)
+ */
+const getEspacios = async (req, res, next) => {
+    try {
+        const query = `
+            SELECT ef.*, e.nombre_sede 
+            FROM Espacio_fisico ef
+            JOIN Edificacion e ON ef.nombre_edificacion = e.nombre_edificacion
+            ORDER BY ef.nombre_edificacion, ef.nro_identificador;
+        `;
+        const { rows } = await pool.query(query);
+        res.status(200).json({ success: true, data: rows });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// El module.exports SIEMPRE debe ser lo último en el archivo
 module.exports = {
     createEdificacion,
     createEspacioFisico,
     toggleMantenimiento,
-    checkDisponibilidad
+    checkDisponibilidad,
+    getEspacios
 };
