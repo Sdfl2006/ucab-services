@@ -4,24 +4,37 @@ import { useAuth } from '../context/AuthContext';
 import Input from '../components/common/Input';
 import Button from '../components/common/Button';
 
+// Roles que el backend sabe crear hoy (ver auditoría: registerUser solo
+// inserta la subclase de Estudiante o Profesor; cualquier otro rol deja la
+// cuenta sin roles asignados y, por lo tanto, inutilizable). Se restringe
+// el selector a estos dos para no dejar a nadie registrado sin salida.
+const ROLES_SOPORTADOS = [
+  { value: 'Estudiante', label: 'Estudiante de Pregrado / Postgrado' },
+  { value: 'Profesor', label: 'Profesor / Docente Investigador' },
+];
+
 export default function Register() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [registrado, setRegistrado] = useState(false);
 
-  // Estado completo para cubrir HU-01 (Datos de usuario)
   const [formData, setFormData] = useState({
-    nombres: 'Jimena',
-    apellidos: 'Martínez',
-    correo: 'hola@sitioincreible.com',
-    clave: 'ucab1234',
-    confirmarClave: 'ucab1234',
-    fechaNacimiento: '2004-05-15',
-    cedula: 'V-31229670',
-    telefono: '0414-1234567',
-    direccion: 'Av. Teherán, Montalbán II, Res. Bucare, Piso 4, Caracas',
-    sede: 'Montalbán',
+    nombres: '',
+    apellidos: '',
+    correo: '',
+    clave: '',
+    confirmarClave: '',
+    cedula: '',
+    telefono: '',
+    sexo: 'F',
+    calle: '',
+    municipio: '',
+    ciudad: '',
     rol: 'Estudiante',
+    facultad: '',
+    escuela: '',
+    semestre_actual: '',
   });
 
   const { register } = useAuth();
@@ -44,28 +57,79 @@ export default function Register() {
       setError('Las contraseñas no coinciden.');
       return;
     }
-    setStep(2); // Avanzar a Datos Universitarios (Figura 1.2 del PDF)
+    setStep(2);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
+    if (formData.rol === 'Estudiante' && (!formData.facultad || !formData.escuela || !formData.semestre_actual)) {
+      setError('Complete facultad, escuela y semestre para continuar como Estudiante.');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
-      await register(formData);
-      navigate('/dashboard', { replace: true });
+      // Mapeo exacto al contrato de POST /users/register (userController.js):
+      // el backend espera `password`, no `clave`, y dirección en tres
+      // columnas separadas (calle/municipio/ciudad), no un texto libre.
+      await register({
+        cedula: formData.cedula,
+        correo: formData.correo,
+        nombres: formData.nombres,
+        apellidos: formData.apellidos,
+        telefono: formData.telefono,
+        sexo: formData.sexo,
+        ciudad: formData.ciudad,
+        municipio: formData.municipio,
+        calle: formData.calle,
+        password: formData.clave,
+        rol: formData.rol,
+        facultad: formData.rol === 'Estudiante' ? formData.facultad : undefined,
+        escuela: formData.rol === 'Estudiante' ? formData.escuela : undefined,
+        semestre_actual: formData.rol === 'Estudiante' ? formData.semestre_actual : undefined,
+      });
+      // El backend deja la cuenta en cuarentena (estado_cuenta = 'suspendida')
+      // hasta que un Personal_Administrativo la active: no hay token que
+      // guardar ni sesión que abrir todavía, así que NO navegamos a
+      // /dashboard — mostramos la confirmación y mandamos a /login.
+      setRegistrado(true);
     } catch (err) {
-      setError('Error al registrar la cuenta. Verifique los datos e intente de nuevo.');
+      setError(
+        err.response?.data?.message ||
+        'Error al registrar la cuenta. Verifique los datos e intente de nuevo.'
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  if (registrado) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-ucab-light via-gray-100 to-gray-200 p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-gray-200/80 p-8 text-center">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-ucab-green/10 flex items-center justify-center mb-4">
+            <svg className="w-7 h-7 text-ucab-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-black text-gray-800">Ficha registrada</h1>
+          <p className="text-sm text-gray-500 mt-2">
+            Tu cuenta quedó pendiente de aprobación por Secretaría / Personal Administrativo.
+            Te avisaremos por correo cuando esté activa y puedas iniciar sesión.
+          </p>
+          <Button variant="primary" size="lg" className="w-full font-bold mt-6" onClick={() => navigate('/login')}>
+            Volver al inicio de sesión
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-ucab-light via-gray-100 to-gray-200 p-4 py-10">
       <div className="max-w-xl w-full bg-white rounded-2xl shadow-xl border border-gray-200/80 overflow-hidden">
-        {/* Cabecera institucional */}
         <div className="bg-ucab-green px-8 py-6 text-white flex items-center justify-between">
           <div>
             <h1 className="text-xl font-black">Registro de Usuario</h1>
@@ -87,7 +151,6 @@ export default function Register() {
             </div>
           )}
 
-          {/* WIZARD PASO 1: DATOS PERSONALES (Figura 1.1) */}
           {step === 1 && (
             <form onSubmit={handleNextStep} className="space-y-4">
               <div className="text-center mb-6">
@@ -106,8 +169,14 @@ export default function Register() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Input label="CÉDULA DE IDENTIDAD" id="cedula" value={formData.cedula} onChange={handleChange} required placeholder="V-31229670" helperText="Ej: V-12345678 o E-87654321" />
-                <Input label="FECHA DE NACIMIENTO" id="fechaNacimiento" type="date" value={formData.fechaNacimiento} onChange={handleChange} required />
+                <Input label="CÉDULA DE IDENTIDAD" id="cedula" value={formData.cedula} onChange={handleChange} required placeholder="V-31229670" />
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">SEXO <span className="text-red-500">*</span></label>
+                  <select id="sexo" value={formData.sexo} onChange={handleChange} className="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ucab-green/20 focus:border-ucab-green">
+                    <option value="F">Femenino</option>
+                    <option value="M">Masculino</option>
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -120,7 +189,11 @@ export default function Register() {
                 <Input label="CONFIRMAR CONTRASEÑA" id="confirmarClave" type="password" value={formData.confirmarClave} onChange={handleChange} required placeholder="••••••••" />
               </div>
 
-              <Input label="DIRECCIÓN DE HABITACIÓN DETALLADA" id="direccion" value={formData.direccion} onChange={handleChange} placeholder="Calle, Edificio/Casa, Piso, Municipio, Ciudad" />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Input label="CALLE" id="calle" value={formData.calle} onChange={handleChange} placeholder="Av. Teherán" />
+                <Input label="MUNICIPIO" id="municipio" value={formData.municipio} onChange={handleChange} placeholder="Chacao" />
+                <Input label="CIUDAD" id="ciudad" value={formData.ciudad} onChange={handleChange} placeholder="Caracas" />
+              </div>
 
               <div className="pt-4">
                 <Button type="submit" variant="primary" size="lg" className="w-full font-bold">
@@ -130,41 +203,13 @@ export default function Register() {
             </form>
           )}
 
-          {/* WIZARD PASO 2: DATOS UNIVERSITARIOS Y SEDE (Figura 1.2) */}
           {step === 2 && (
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="text-center mb-6">
                 <h2 className="text-lg font-bold text-gray-800">Datos Universitarios</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Seleccione su sede y el rol institucional al que pertenece</p>
+                <p className="text-xs text-gray-500 mt-0.5">Seleccione el rol institucional al que pertenece</p>
               </div>
 
-              {/* Selector de Sede (Montalbán / Guayana) - Criterio ERE */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  SEDE UCAB ADSCRITA <span className="text-red-500">*</span>
-                </label>
-                <div className="grid grid-cols-2 gap-4">
-                  {['Montalbán', 'Guayana'].map((sedeOption) => (
-                    <div
-                      key={sedeOption}
-                      onClick={() => setFormData((prev) => ({ ...prev, sede: sedeOption }))}
-                      className={`p-4 rounded-xl border-2 cursor-pointer flex flex-col items-center justify-center transition-all ${
-                        formData.sede === sedeOption
-                          ? 'border-ucab-green bg-ucab-green/5 font-bold text-ucab-green shadow-sm'
-                          : 'border-gray-200 hover:border-gray-300 text-gray-600'
-                      }`}
-                    >
-                      <svg className="w-6 h-6 mb-1 text-current" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      <span className="text-sm">Sede {sedeOption}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Selector de Tipo de Miembro (Roles del sistema) */}
               <div>
                 <label htmlFor="rol" className="block text-sm font-semibold text-gray-700 mb-1">
                   TIPO DE MIEMBRO DE LA COMUNIDAD <span className="text-red-500">*</span>
@@ -175,20 +220,23 @@ export default function Register() {
                   onChange={handleChange}
                   className="w-full px-3.5 py-3 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ucab-green/20 focus:border-ucab-green font-medium text-gray-800 cursor-pointer"
                 >
-                  <option value="Estudiante">Estudiante de Pregrado / Postgrado</option>
-                  <option value="Profesor">Profesor / Docente Investigador</option>
-                  <option value="Egresado">Egresado UCAB</option>
-                  <option value="Personal Administrativo">Personal Administrativo</option>
-                  <option value="Becario">Becario UCAB</option>
-                  <option value="Preparador">Preparador Académico</option>
-                  <option value="Aliado Externo">Aliado Externo / Empresa</option>
+                  {ROLES_SOPORTADOS.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
                 </select>
                 <p className="mt-1 text-xs text-gray-500">
-                  El sistema habilitará módulos específicos y cálculo de tarifas según este rol institucional (HU-06).
+                  Por ahora solo Estudiante y Profesor tienen alta automática soportada (ver nota de auditoría del equipo).
                 </p>
               </div>
 
-              {/* Resumen en tarjeta de los datos ingresados en paso 1 */}
+              {formData.rol === 'Estudiante' && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Input label="FACULTAD" id="facultad" value={formData.facultad} onChange={handleChange} required placeholder="Ingeniería" />
+                  <Input label="ESCUELA" id="escuela" value={formData.escuela} onChange={handleChange} required placeholder="Informática" />
+                  <Input label="SEMESTRE ACTUAL" id="semestre_actual" type="number" min="1" value={formData.semestre_actual} onChange={handleChange} required placeholder="6" />
+                </div>
+              )}
+
               <div className="p-4 bg-gray-50 rounded-xl border border-gray-200/80 text-xs text-gray-600 space-y-1">
                 <div className="font-semibold text-gray-800 border-b border-gray-200 pb-1 mb-1.5 flex justify-between items-center">
                   <span>Resumen de Ficha:</span>

@@ -32,7 +32,6 @@ app.use('/api/v1/requests', requestRoutes);
 app.use('/api/v1/pagos', paymentRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/beneficiarios', beneficiaryRoutes);
-app.use(errorHandler);
 app.use('/api/v1/infraestructura', infrastructureRoutes);
 app.use('/api/v1/servicios', serviceRoutes);
 app.use('/api/v1/solicitudes', requestRoutes);
@@ -40,5 +39,6 @@ app.use('/api/v1/bolsa-trabajo', jobBoardRoutes);
 app.use('/api/v1/reportes', reportRoutes);
 
 initCronJobs();
+app.use(errorHandler);
 
 module.exports = app;

@@ -1,11 +1,128 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import beneficiaryService from '../services/beneficiaryService';
 import Card from '../components/common/Card';
 import Badge from '../components/common/Badge';
 import Button from '../components/common/Button';
+import Input from '../components/common/Input';
+
+// HU-09 / HU-10: solo Profesor o Personal_Administrativo pueden ser
+// titulares de beneficiarios (regla R-05, validada también en el backend);
+// el resto de los roles nunca tendrá filas que mostrar aquí.
+function FilaBeneficiario({ beneficiario, onConstanciaSubida }) {
+  const [referencia, setReferencia] = useState('');
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState(null);
+  const [exito, setExito] = useState(false);
+
+  const requiereConstancia = beneficiario.tipo_carga === 'Carga_mayor' && beneficiario.beneficios_activos === false;
+
+  async function handleSubir(e) {
+    e.preventDefault();
+    if (!referencia.trim()) return;
+    setSubiendo(true);
+    setError(null);
+    try {
+      await beneficiaryService.subirConstanciaEstudios(beneficiario.cedula_beneficiario, {
+        constancia_estudios: referencia.trim(),
+      });
+      setExito(true);
+      onConstanciaSubida?.();
+    } catch (err) {
+      setError(err.friendlyMessage || 'No se pudo registrar la constancia de estudios.');
+    } finally {
+      setSubiendo(false);
+    }
+  }
+
+  return (
+    <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200/80">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <p className="font-bold text-gray-800 text-sm">{beneficiario.nombres} {beneficiario.apellidos}</p>
+          <p className="text-xs text-gray-500">{beneficiario.parentesco} · C.I. {beneficiario.cedula_beneficiario} · {beneficiario.tipo_carga?.replace('_', ' ')}</p>
+        </div>
+        <Badge
+          label={beneficiario.beneficios_activos ? 'Beneficios activos' : 'Beneficios inactivos'}
+          status={beneficiario.beneficios_activos ? 'success' : 'error'}
+          size="sm"
+        />
+      </div>
+
+      {requiereConstancia && !exito && (
+        <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg" role="alert">
+          <p className="text-xs text-amber-900 leading-relaxed">
+            <b>{beneficiario.nombres}</b> cumplió la mayoría de edad y sus beneficios fueron desactivados (HU-10).
+            Registra la referencia de la constancia de estudios universitarios vigente para reactivarlos.
+          </p>
+          <form onSubmit={handleSubir} className="flex flex-col sm:flex-row gap-2 mt-2.5">
+            <Input
+              placeholder="URL o código del documento digitalizado"
+              value={referencia}
+              onChange={(e) => setReferencia(e.target.value)}
+              className="flex-1"
+            />
+            <Button type="submit" size="sm" variant="primary" loading={subiendo} disabled={!referencia.trim()}>
+              Registrar constancia
+            </Button>
+          </form>
+          {error && <p className="text-xs text-red-600 font-medium mt-1.5">{error}</p>}
+        </div>
+      )}
+
+      {exito && (
+        <p className="mt-3 text-xs font-semibold text-emerald-700">
+          ✓ Constancia registrada. Los beneficios fueron reactivados.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SeccionBeneficiarios() {
+  const [beneficiarios, setBeneficiarios] = useState([]);
+  const [status, setStatus] = useState('idle');
+  const [error, setError] = useState(null);
+
+  const cargar = useCallback(async () => {
+    setStatus('loading');
+    try {
+      const data = await beneficiaryService.listarMisBeneficiarios();
+      setBeneficiarios(data);
+      setStatus('success');
+    } catch (err) {
+      setError(err.friendlyMessage || 'No se pudieron cargar tus beneficiarios.');
+      setStatus('error');
+    }
+  }, []);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  return (
+    <Card title="Beneficiarios" subtitle="Cobertura de salud y recreación de tus cargas familiares (HU-09 / HU-10)">
+      {status === 'loading' && <p className="text-sm text-gray-400">Cargando beneficiarios…</p>}
+      {status === 'error' && (
+        <div className="text-sm text-red-600 flex items-center justify-between">
+          <span>{error}</span>
+          <Button size="sm" variant="secondary" onClick={cargar}>Reintentar</Button>
+        </div>
+      )}
+      {status === 'success' && beneficiarios.length === 0 && (
+        <p className="text-sm text-gray-400">Aún no tienes beneficiarios registrados.</p>
+      )}
+      {status === 'success' && beneficiarios.length > 0 && (
+        <div className="space-y-3">
+          {beneficiarios.map((b) => (
+            <FilaBeneficiario key={b.cedula_beneficiario} beneficiario={b} onConstanciaSubida={cargar} />
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 export default function Profile() {
-  const { user } = useAuth();
+  const { user, hasAnyRole } = useAuth();
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn py-4">
@@ -137,6 +254,8 @@ export default function Profile() {
         </div>
 
       </div>
+
+      {hasAnyRole('Profesor', 'Personal_Administrativo') && <SeccionBeneficiarios />}
 
     </div>
   );

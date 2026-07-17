@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { TASA_BCV } from '../services/mockData';
+import paymentService from '../services/paymentService';
 import Card from '../components/common/Card';
 import Button from '../components/common/Button';
 import Input from '../components/common/Input';
@@ -10,21 +11,17 @@ export default function Checkout() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [orden, setOrden] = useState(null);
-
-  // Estados de la pasarela de pago (Referencia Figura 5 del PDF)
-  const [metodoPago, setMetodoPago] = useState('PAGO MOVIL'); // 'PAGO MOVIL', 'ZELLE', 'TRANSFERENCIA', 'TAI'
+  const [metodoPago, setMetodoPago] = useState('PAGO MOVIL');
   const [referencia, setReferencia] = useState('');
   const [terminosAceptados, setTerminosAceptados] = useState(false);
   const [error, setError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Cargamos la orden transaccional guardada en el paso anterior
   useEffect(() => {
     const pending = localStorage.getItem('ucab_pending_order');
     if (pending) {
       setOrden(JSON.parse(pending));
     } else {
-      // Orden fallback por si acceden directamente a /checkout en la demostración
       setOrden({
         id: 'SOL-2026-9978',
         nroSolicitud: '9978',
@@ -32,14 +29,14 @@ export default function Checkout() {
         categoria: 'Deportes',
         sede: user?.sede || 'Montalbán',
         fechaEjecucion: '15 DE MAYO, 4:00PM',
-        montoUsd: 20.00,
-        montoBs: 20.00 * TASA_BCV,
+        montoUsd: 20.0,
+        montoBs: 20.0 * TASA_BCV,
         acompanantes: [{ nombre: 'Carlos Mendoza', cedula: 'V-28900111' }],
       });
     }
   }, [user]);
 
-  const handleFinalizarPago = (e) => {
+  const handleFinalizarPago = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -55,43 +52,53 @@ export default function Checkout() {
 
     setIsProcessing(true);
 
-    setTimeout(() => {
-      // Creamos la factura definitiva emitida
+    try {
+      const invoicePayload = {
+        nro_solicitud: orden?.nroSolicitud,
+        fecha_apertura: new Date().toISOString(),
+        rif_corporativo: 'J-00012255-5',
+        razon_social_corporativa: 'Universidad Católica Andrés Bello',
+      };
+
+      let invoiceData = null;
+      try {
+        const response = await paymentService.generateInvoice(invoicePayload);
+        invoiceData = response?.data ?? response;
+      } catch (err) {
+        console.warn('No se pudo generar la factura backend.', err);
+      }
+
       const facturaCompletada = {
         ...orden,
         nroTransaccion: Math.floor(1000 + Math.random() * 9000).toString(),
-        nroControl: `00-${Math.floor(100000 + Math.random() * 900000)}`,
+        nroControl: invoiceData?.nro_control || invoiceData?.nroControl || `00-${Math.floor(100000 + Math.random() * 900000)}`,
         fechaEmision: new Date().toLocaleDateString('es-VE', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-        metodoPago: metodoPago,
+        metodoPago,
         referencia: referencia || 'NFC-TAI-CHIP-9901',
-        estatusFactura: 'PAGADA',
+        estatusFactura: invoiceData?.estatus || 'PAGADA',
       };
 
-      // Guardamos la factura para mostrarla en la pantalla de éxito
       localStorage.setItem('ucab_last_invoice', JSON.stringify(facturaCompletada));
       localStorage.removeItem('ucab_pending_order');
-      setIsProcessing(false);
-
-      // Redirigir al comprobante de éxito (Figura 6)
       navigate('/factura/comprobante');
-    }, 1200);
+    } catch (err) {
+      setError(err.friendlyMessage || 'Ocurrió un error al procesar el pago.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   if (!orden) return null;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 animate-fadeIn">
-      
-      {/* Cabecera del Resumen */}
       <div className="bg-ucab-green text-white p-6 rounded-2xl shadow-md flex items-center justify-between">
         <div>
           <h1 className="text-xl sm:text-2xl font-black">Resumen del Pedido</h1>
-          <p className="text-xs text-emerald-100 mt-0.5">Verifique los detalles de su servicio y proceda a la liquidación</p>
+          <p className="text-xs text-emerald-100 mt-0.5">Verifique los detalles de su servicio y proceda a la liquidación.</p>
         </div>
         <div className="text-right">
-          <span className="text-xs font-bold bg-white/10 px-3 py-1 rounded-full border border-white/20">
-            Paso 2 de 2: Pago
-          </span>
+          <span className="text-xs font-bold bg-white/10 px-3 py-1 rounded-full border border-white/20">Paso 2 de 2: Pago</span>
         </div>
       </div>
 
@@ -102,12 +109,9 @@ export default function Checkout() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-        
-        {/* COLUMNA IZQUIERDA: Detalle Transaccional (Fiel a Figura 5 del PDF) */}
         <div className="md:col-span-7 space-y-4">
           <Card title="Detalle de la Solicitud" subtitle={`Número de Control: #${orden.nroSolicitud}`}>
             <div className="space-y-4 text-sm divide-y divide-gray-100">
-              
               <div className="pt-2">
                 <span className="text-xs font-bold text-gray-400 block uppercase">SERVICIO:</span>
                 <p className="font-extrabold text-gray-900 text-base mt-0.5 uppercase">{orden.servicio}</p>
@@ -135,21 +139,16 @@ export default function Checkout() {
                 </div>
               )}
 
-              {/* MONTO A PAGAR (Referencia textual Figura 5: "MONTO A PAGAR: 20$/8000BS") */}
               <div className="pt-4 pb-2">
                 <span className="text-xs font-bold text-gray-400 block uppercase">MONTO A PAGAR:</span>
                 <div className="flex items-baseline gap-3 mt-1 bg-ucab-green/5 p-3 rounded-xl border border-ucab-green/20">
                   <span className="text-2xl font-black text-ucab-green">${orden.montoUsd.toFixed(2)} USD</span>
                   <span className="text-base font-bold text-gray-700">/ {orden.montoBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} BS</span>
                 </div>
-                <p className="text-[11px] text-gray-500 mt-1.5">
-                  Tasa referencial oficial BCV: <b>{TASA_BCV} Bs/$</b>.
-                </p>
+                <p className="text-[11px] text-gray-500 mt-1.5">Tasa referencial oficial BCV: <b>{TASA_BCV} Bs/$</b>.</p>
               </div>
-
             </div>
 
-            {/* Checkbox Términos y Condiciones (Figura 5) */}
             <div className="mt-6 pt-4 border-t border-gray-200">
               <label className="flex items-start gap-2.5 cursor-pointer text-xs text-gray-600">
                 <input
@@ -159,23 +158,18 @@ export default function Checkout() {
                   className="rounded text-ucab-green focus:ring-ucab-green w-4 h-4 mt-0.5 shrink-0"
                 />
                 <span>
-                  Acepto los <Link to="/terminos" target="_blank" className="font-bold text-ucab-green underline">Términos y condiciones</Link> de uso de las instalaciones físicas y normas administrativas de la Universidad Católica Andrés Bello.
+                  Acepto los <Link to="/terminos" target="_blank" className="font-bold text-ucab-green underline">Términos y condiciones</Link> de uso de las instalaciones físicas y normas administrativas.
                 </span>
               </label>
             </div>
           </Card>
         </div>
 
-        {/* COLUMNA DERECHA: Confirmación y Pasarela de Pago (Figura 5) */}
         <div className="md:col-span-5 space-y-4">
           <Card title="Confirmación de pagos" subtitle="Seleccione su método de liquidación">
-            
             <form onSubmit={handleFinalizarPago} className="space-y-4">
-              
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-2">MÉTODO DE PAGO</label>
-                
-                {/* Opciones de Pago (Referencia botones Figura 5) */}
                 <div className="grid grid-cols-1 gap-2">
                   {[
                     { id: 'PAGO MOVIL', label: 'PAGO MÓVIL (Bancos Nacionales)', icon: '📱' },
@@ -203,7 +197,6 @@ export default function Checkout() {
                 </div>
               </div>
 
-              {/* Datos para realizar la transferencia según método */}
               <div className="p-3.5 bg-gray-50 rounded-xl border border-gray-200 text-xs text-gray-600 space-y-1">
                 {metodoPago === 'PAGO MOVIL' && (
                   <>
@@ -217,7 +210,7 @@ export default function Checkout() {
                   <>
                     <p className="font-bold text-gray-800">Datos para transferencia Zelle:</p>
                     <p>• <b>Correo:</b> cobranzas@ucab.edu.ve</p>
-                    <p>• <b>Titular:</b> Universidad Catolica Andres Bello</p>
+                    <p>• <b>Titular:</b> Universidad Católica Andrés Bello</p>
                     <p>• <b>Monto exacto:</b> ${orden.montoUsd.toFixed(2)} USD</p>
                   </>
                 )}
@@ -236,7 +229,6 @@ export default function Checkout() {
                 )}
               </div>
 
-              {/* Input de Número de Referencia (Referencia textual Figura 5) */}
               {metodoPago !== 'TAI' ? (
                 <div>
                   <Input
@@ -255,26 +247,15 @@ export default function Checkout() {
                 </div>
               )}
 
-              {/* Botón Finalizar Pago (Referencia Figura 5) */}
               <div className="pt-2">
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="lg"
-                  loading={isProcessing}
-                  className="w-full font-black shadow-lg text-base py-3.5"
-                >
-                  Finalizar pago
+                <Button type="submit" loading={isProcessing} variant="primary" size="lg" className="w-full">
+                  Finalizar Pago
                 </Button>
               </div>
-
             </form>
-
           </Card>
         </div>
-
       </div>
-
     </div>
   );
 }

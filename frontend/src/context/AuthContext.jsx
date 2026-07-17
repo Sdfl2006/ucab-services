@@ -1,101 +1,87 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import authService from '../services/authService';
+import userService from '../services/userService';
+import { onSessionInvalidated } from '../services/api';
 
 const AuthContext = createContext();
 
-// Usuario mock por defecto para facilitar las pruebas durante la evaluación
-const MOCK_DEFAULT_USER = {
-  id: 'usr-001',
-  cedula: 'V-31229670',
-  nombres: 'Jimena',
-  apellidos: 'Martínez',
-  nombreCompleto: 'Jimena Martínez',
-  correo: 'hola@sitioincreible.com',
-  telefono: '0414-1234567',
-  direccion: 'Av. Teherán, Montalbán II, Caracas',
-  sede: 'Montalbán',
-  rol: 'Estudiante', // Estudiante, Profesor, Egresado, Personal Administrativo, Becario, Preparador, Aliado Externo
-  categoriaFidelidad: 'Frecuente',
-  estadoCuenta: 'activa',
-  ultimaConexion: new Date().toISOString(),
+const MENSAJES_SESION = {
+  sesion_requerida: 'Debes iniciar sesión para continuar.',
+  sesion_expirada: 'Tu sesión expiró. Inicia sesión de nuevo.',
 };
+
+// El JWT real (ver authController.js) trae: cedula, correo, nombres,
+// apellidos, roles (array), categoria_fidelidad. Varias pantallas ya
+// existentes leen `user.rol` (singular) y `user.nombreCompleto`, que NO
+// vienen del backend — se derivan aquí para no tener que tocar todos los
+// componentes que ya asumían esa forma.
+function normalizeUser(payload) {
+  if (!payload) return null;
+  return {
+    ...payload,
+    roles: payload.roles || [],
+    rol: payload.roles?.[0] || 'Miembro',
+    nombreCompleto: `${payload.nombres || ''} ${payload.apellidos || ''}`.trim(),
+    categoriaFidelidad: payload.categoria_fidelidad,
+  };
+}
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [sessionNotice, setSessionNotice] = useState(null);
 
-  // Al cargar la app, verificamos si hay sesión guardada
   useEffect(() => {
-    const storedUser = localStorage.getItem('ucab_user_session');
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch (error) {
-        console.error('Error al parsear la sesión:', error);
-        localStorage.removeItem('ucab_user_session');
-      }
-    }
+    setUser(normalizeUser(authService.getUserFromToken()));
     setLoading(false);
   }, []);
 
-  // Función para Iniciar Sesión (Login HU-04)
-  const login = async (correo, clave) => {
-    setLoading(true);
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        // Simulación de autenticación (acepta el correo mock o crea una sesión dinámica con el correo ingresado)
-        if (correo && clave) {
-          const sessionUser = {
-            ...MOCK_DEFAULT_USER,
-            correo: correo,
-            nombreCompleto: correo.includes('hola') ? 'Jimena Martínez' : correo.split('@')[0],
-            nombres: correo.includes('hola') ? 'Jimena' : correo.split('@')[0],
-            ultimaConexion: new Date().toISOString(),
-          };
-          setUser(sessionUser);
-          localStorage.setItem('ucab_user_session', JSON.stringify(sessionUser));
-          setLoading(false);
-          resolve(sessionUser);
-        } else {
-          setLoading(false);
-          reject(new Error('Credenciales inválidas. Por favor verifique correo y contraseña.'));
-        }
-      }, 800); // Simulamos latencia de red
+  useEffect(() => {
+    return onSessionInvalidated((reason) => {
+      if (reason === 'sin_permiso') return; // problema de rol puntual, no de sesión
+      authService.logout();
+      setUser(null);
+      setSessionNotice(MENSAJES_SESION[reason] || null);
     });
-  };
+  }, []);
 
-  // Función para Registro de Nuevos Miembros (HU-01)
-  const register = async (userData) => {
+  // Firma (correo, clave) intacta: Login.jsx no necesita cambios, el
+  // uuid_dispositivo que exige el backend se genera solo en authService.
+  const login = useCallback(async (correo, password) => {
     setLoading(true);
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const newUser = {
-          id: `usr-${Date.now()}`,
-          cedula: userData.cedula,
-          nombres: userData.nombres,
-          apellidos: userData.apellidos,
-          nombreCompleto: `${userData.nombres} ${userData.apellidos}`,
-          correo: userData.correo,
-          telefono: userData.telefono || 'No registrado',
-          direccion: userData.direccion || 'Caracas, Venezuela',
-          sede: userData.sede || 'Montalbán',
-          rol: userData.rol || 'Estudiante',
-          categoriaFidelidad: 'Regular',
-          estadoCuenta: 'activa',
-          ultimaConexion: new Date().toISOString(),
-        };
-        setUser(newUser);
-        localStorage.setItem('ucab_user_session', JSON.stringify(newUser));
-        setLoading(false);
-        resolve(newUser);
-      }, 1000);
-    });
-  };
+    try {
+      const rawUser = await authService.login(correo, password);
+      const normalized = normalizeUser(rawUser);
+      setUser(normalized);
+      setSessionNotice(null);
+      return normalized;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  // Función para Cerrar Sesión
-  const logout = () => {
+  const logout = useCallback(() => {
+    authService.logout();
     setUser(null);
-    localStorage.removeItem('ucab_user_session');
-  };
+  }, []);
+
+  // El backend NO autologuea al registrar (la cuenta queda en cuarentena
+  // hasta que Personal_Administrativo la active), así que esto solo crea
+  // el registro y devuelve el mensaje del servidor. No toca `user`.
+  const register = useCallback(async (payload) => {
+    setLoading(true);
+    try {
+      return await userService.registrar(payload);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const hasRole = useCallback((rol) => user?.roles?.includes(rol) ?? false, [user]);
+  const hasAnyRole = useCallback(
+    (...roles) => roles.some((r) => user?.roles?.includes(r)),
+    [user]
+  );
 
   return (
     <AuthContext.Provider
@@ -103,9 +89,13 @@ export const AuthProvider = ({ children }) => {
         user,
         loading,
         isAuthenticated: !!user,
+        sessionNotice,
+        clearSessionNotice: () => setSessionNotice(null),
         login,
-        register,
         logout,
+        register,
+        hasRole,
+        hasAnyRole,
       }}
     >
       {children}

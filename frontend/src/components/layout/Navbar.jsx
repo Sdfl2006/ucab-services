@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import Badge from '../common/Badge';
 
 export default function Navbar() {
-  const { user, logout } = useAuth();
+  const { user, logout, hasAnyRole } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -20,6 +20,7 @@ export default function Navbar() {
     { name: 'Pagos', path: '/pagos' },
     { name: 'Soporte', path: '/soporte' },
     { name: 'Solicitudes', path: '/solicitudes' },
+    ...(hasAnyRole('Admin', 'Personal_Administrativo') ? [{ name: 'Taquilla', path: '/taquilla' }] : []),
   ];
 
   return (

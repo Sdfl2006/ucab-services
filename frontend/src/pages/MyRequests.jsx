@@ -1,52 +1,99 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { MOCK_SOLICITUDES_INICIALES, TASA_BCV } from '../services/mockData';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import requestService from '../services/requestService';
+import serviceService from '../services/serviceService';
 import DataTable from '../components/table/DataTable';
 import Badge from '../components/common/Badge';
 import Button from '../components/common/Button';
 
 export default function MyRequests() {
   const [solicitudes, setSolicitudes] = useState([]);
+  const [servicios, setServicios] = useState([]);
   const [filtroCategoria, setFiltroCategoria] = useState('Todos');
+  const [status, setStatus] = useState('idle');
+  const [error, setError] = useState(null);
   const navigate = useNavigate();
 
-  // Cargamos las solicitudes (simulando fetch desde API o localStorage para persistencia en demostración)
   useEffect(() => {
-    const stored = localStorage.getItem('ucab_user_requests');
-    if (stored) {
-      setSolicitudes(JSON.parse(stored));
-    } else {
-      setSolicitudes(MOCK_SOLICITUDES_INICIALES);
-      localStorage.setItem('ucab_user_requests', JSON.stringify(MOCK_SOLICITUDES_INICIALES));
-    }
+    const cargarSolicitudes = async () => {
+      setStatus('loading');
+      try {
+        const [solicitudesData, serviciosData] = await Promise.all([
+          requestService.getRequests(),
+          serviceService.getAllServices(),
+        ]);
+        setSolicitudes(solicitudesData);
+        setServicios(serviciosData);
+        setStatus('success');
+      } catch (err) {
+        setError(err.friendlyMessage || 'No se pudieron cargar las solicitudes. Intente nuevamente.');
+        setStatus('error');
+      }
+    };
+
+    cargarSolicitudes();
   }, []);
 
-  // Filtrado rápido por pestañas de categoría
-  const solicitudesFiltradas = filtroCategoria === 'Todos'
-    ? solicitudes
-    : solicitudes.filter(s => s.categoria === filtroCategoria);
+  const serviciosMap = useMemo(() => {
+    return servicios.reduce((acc, servicio) => {
+      const key = servicio.codigo_servicio;
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(servicio);
+      return acc;
+    }, {});
+  }, [servicios]);
 
-  // Mapeo de estatus para nuestro componente Badge
+  const solicitudesEnriquecidas = useMemo(() => {
+    return solicitudes.map((solicitud) => {
+      const serviciosRelacionados = serviciosMap[solicitud.codigo_servicio] || [];
+      const servicioRelacionado = serviciosRelacionados.find((item) => item.nombre_sede === solicitud.sede) || serviciosRelacionados[0];
+
+      return {
+        ...solicitud,
+        servicio: servicioRelacionado?.descripcion_detallada || solicitud.codigo_servicio,
+        categoria: servicioRelacionado?.nombre_categoria || solicitud.categoria || 'General',
+        montoUsd: Number(servicioRelacionado?.precio_final_sede ?? servicioRelacionado?.precio_base ?? 0),
+        montoBs: Number(servicioRelacionado?.precio_final_sede ?? servicioRelacionado?.precio_base ?? 0),
+        fechaEjecucion: solicitud.fecha_creacion || solicitud.fecha_ejecucion || new Date().toISOString(),
+        estatusGeneral: solicitud.estatus_general || solicitud.estatusGeneral || 'Pendiente',
+      };
+    });
+  }, [solicitudes, serviciosMap]);
+
+  const solicitudesFiltradas = filtroCategoria === 'Todos'
+    ? solicitudesEnriquecidas
+    : solicitudesEnriquecidas.filter((s) => s.categoria === filtroCategoria);
+
   const getStatusVariant = (status) => {
     switch (status) {
-      case 'Aprobado': return 'success';
-      case 'Pendiente': return 'warning';
-      case 'En Proceso': return 'info';
-      case 'Culminado': return 'ucab';
-      case 'Rechazado': return 'error';
-      default: return 'default';
+      case 'Aprobado':
+      case 'aprobado':
+        return 'success';
+      case 'Pendiente':
+      case 'pendiente':
+        return 'warning';
+      case 'En Proceso':
+      case 'en_proceso':
+      case 'En proceso':
+        return 'info';
+      case 'Culminado':
+      case 'completado':
+        return 'ucab';
+      case 'Rechazado':
+        return 'error';
+      default:
+        return 'default';
     }
   };
 
-  // Configuración de columnas para nuestro <DataTable /> (Rúbrica)
   const columns = [
     {
-      key: 'nroSolicitud',
+      key: 'nro_solicitud',
       label: 'Nro. Control',
       sortable: true,
       render: (row) => (
-        <span className="font-mono font-bold text-ucab-green">#{row.nroSolicitud}</span>
-      )
+        <span className="font-mono font-bold text-ucab-green">#{row.nro_solicitud}</span>
+      ),
     },
     {
       key: 'servicio',
@@ -59,34 +106,32 @@ export default function MyRequests() {
             {row.categoria} • Sede {row.sede}
           </span>
         </div>
-      )
+      ),
     },
     {
       key: 'fechaEjecucion',
-      label: 'Fecha Programada',
+      label: 'Fecha Creación',
       sortable: true,
       render: (row) => (
-        <span className="text-xs font-medium text-gray-700">{row.fechaEjecucion}</span>
-      )
+        <span className="text-xs font-medium text-gray-700">{new Date(row.fechaEjecucion).toLocaleDateString('es-VE')}</span>
+      ),
     },
     {
       key: 'montoUsd',
-      label: 'Monto Total',
+      label: 'Monto Estimado',
       sortable: true,
       render: (row) => (
         <div className="text-right sm:text-left">
           <p className="font-bold text-gray-900">${row.montoUsd.toFixed(2)} USD</p>
           <p className="text-[11px] text-gray-500">Bs. {row.montoBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</p>
         </div>
-      )
+      ),
     },
     {
       key: 'estatusGeneral',
       label: 'Estatus',
       sortable: true,
-      render: (row) => (
-        <Badge label={row.estatusGeneral} status={getStatusVariant(row.estatusGeneral)} />
-      )
+      render: (row) => <Badge label={row.estatusGeneral} status={getStatusVariant(row.estatusGeneral)} />, 
     },
     {
       key: 'acciones',
@@ -94,34 +139,31 @@ export default function MyRequests() {
       sortable: false,
       render: (row) => (
         <div className="flex items-center gap-2">
-          {row.estatusGeneral === 'Aprobado' || row.estatusGeneral === 'Culminado' ? (
+          <button
+            onClick={() => navigate(`/solicitudes/${row.nro_solicitud}`)}
+            className="text-xs font-semibold text-ucab-blue hover:underline cursor-pointer"
+          >
+            Ver Detalle
+          </button>
+          {(row.estatusGeneral === 'Aprobado' || row.estatusGeneral === 'completado' || row.estatusGeneral === 'Culminado') && (
             <Button size="sm" variant="secondary" onClick={() => navigate('/pagos')}>
               Ver Factura
             </Button>
-          ) : (
-            <button
-              onClick={() => alert(`Detalle de solicitud #${row.nroSolicitud}\nAcompañantes registrados: ${row.acompanantes?.length || 0}\nCreada el: ${row.fechaCreacion}`)}
-              className="text-xs font-semibold text-ucab-blue hover:underline cursor-pointer"
-            >
-              Ver Detalle
-            </button>
           )}
         </div>
-      )
-    }
+      ),
+    },
   ];
 
   const categorias = ['Todos', 'Deportes', 'Servicios Médicos', 'Trámites Académicos', 'Cultura y Eventos', 'Carnetización'];
 
   return (
     <div className="space-y-6 animate-fadeIn">
-      
-      {/* Cabecera de Módulo */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-gray-200/80 shadow-sm">
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-ucab-green">Historial de Solicitudes</h1>
           <p className="text-xs sm:text-sm text-gray-500 mt-1">
-            Gestione, consulte el estatus en tiempo real y revise los comprobantes de sus servicios universitarios.
+            Gestione y consulte el estatus en tiempo real de sus solicitudes registradas en backend.
           </p>
         </div>
         <Button variant="primary" size="md" onClick={() => navigate('/solicitudes/nueva')} className="font-bold shadow-md shrink-0">
@@ -129,39 +171,48 @@ export default function MyRequests() {
         </Button>
       </div>
 
-      {/* Pestañas de Filtrado por Categoría */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-gray-200 no-scrollbar">
-        {categorias.map((cat) => (
-          <button
-            key={cat}
-            onClick={() => setFiltroCategoria(cat)}
-            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-              filtroCategoria === cat
-                ? 'bg-ucab-green text-white shadow-sm'
-                : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
-            }`}
-          >
-            {cat} {cat === 'Todos' ? `(${solicitudes.length})` : `(${solicitudes.filter(s => s.categoria === cat).length})`}
-          </button>
-        ))}
-      </div>
+      {status === 'loading' && (
+        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6 text-sm text-gray-600">Cargando solicitudes…</div>
+      )}
 
-      {/* RÚBRICA: Tabla Inteligente con Paginación, Búsqueda y Ordenamiento */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between text-xs text-gray-500 px-1">
-          <span>💡 Haga clic en los encabezados de la columna para ordenar (Ascedente/Descendente).</span>
-          <span>Tasa BCV: <b>{TASA_BCV} Bs/$</b></span>
-        </div>
+      {status === 'error' && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>
+      )}
 
-        <DataTable
-          columns={columns}
-          data={solicitudesFiltradas}
-          searchableColumns={['nroSolicitud', 'servicio', 'categoria', 'sede', 'estatusGeneral']}
-          initialPageSize={5}
-          emptyMessage="No se encontraron solicitudes registradas en esta categoría."
-        />
-      </div>
+      {status === 'success' && (
+        <>
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-gray-200 no-scrollbar">
+            {categorias.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setFiltroCategoria(cat)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                  filtroCategoria === cat
+                    ? 'bg-ucab-green text-white shadow-sm'
+                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
+                }`}
+              >
+                {cat} {cat === 'Todos' ? `(${solicitudesEnriquecidas.length})` : `(${solicitudesEnriquecidas.filter((s) => s.categoria === cat).length})`}
+              </button>
+            ))}
+          </div>
 
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs text-gray-500 px-1">
+              <span>💡 Haga clic en los encabezados de la columna para ordenar.</span>
+              <span>Los montos son estimados según el catálogo de servicios.</span>
+            </div>
+
+            <DataTable
+              columns={columns}
+              data={solicitudesFiltradas}
+              searchableColumns={['nro_solicitud', 'servicio', 'categoria', 'sede', 'estatusGeneral']}
+              initialPageSize={5}
+              emptyMessage="No se encontraron solicitudes registradas en esta categoría."
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

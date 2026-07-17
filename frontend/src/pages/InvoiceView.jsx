@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { TASA_BCV } from '../services/mockData';
-import Card from '../components/common/Card';
+import paymentService from '../services/paymentService';
 import Button from '../components/common/Button';
 import Badge from '../components/common/Badge';
 
@@ -12,62 +11,83 @@ export default function InvoiceView() {
   const [factura, setFactura] = useState(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('ucab_last_invoice');
-    if (saved) {
-      setFactura(JSON.parse(saved));
-    } else {
-      // Factura fallback de demostración
-      setFactura({
-        id: 'SOL-2026-9978',
-        nroTransaccion: '9978',
-        nroControl: '00-847291',
-        servicio: 'ALQUILER DE CANCHA DE FUTBOL',
-        categoria: 'Deportes',
-        sede: user?.sede || 'Montalbán',
-        fechaEjecucion: '15 DE MAYO, 4:00PM',
-        fechaEmision: '15 de mayo de 2026, 10:30 AM',
-        montoUsd: 20.00,
-        montoBs: 20.00 * TASA_BCV,
-        metodoPago: 'PAGO MOVIL',
-        referencia: '12344567',
-        estatusFactura: 'PAGADA',
-      });
-    }
+    const cargarFactura = async () => {
+      try {
+        const invoices = await paymentService.getInvoices();
+        if (invoices && invoices.length > 0) {
+          const invoice = invoices[0];
+          setFactura({
+            id: invoice.id || invoice.nro_control || `${invoice.nro_solicitud}`,
+            nroTransaccion: invoice.nro_control || invoice.id || 'N/A',
+            nroControl: invoice.nro_control || invoice.id || '00-000000',
+            servicio: invoice.servicio || `Solicitud ${invoice.nro_solicitud || ''}`,
+            categoria: invoice.categoria || 'Servicio UCAB',
+            sede: invoice.nombre_sede || user?.sede || 'Montalbán',
+            fechaEjecucion: invoice.fecha_ejecucion || 'Pendiente',
+            fechaEmision: invoice.fecha_emision ? new Date(invoice.fecha_emision).toLocaleString('es-VE') : new Date().toLocaleString('es-VE'),
+            montoUsd: Number(invoice.monto_usd ?? invoice.saldo ?? 0),
+            montoBs: Number(invoice.monto_bs ?? invoice.saldo ?? 0),
+            metodoPago: invoice.metodo || invoice.metodo_pago || 'Pago',
+            referencia: invoice.referencia || invoice.nro_control || 'N/A',
+            estatusFactura: invoice.estatus || 'PENDIENTE',
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn('No se pudieron cargar las facturas desde backend.', err);
+      }
+
+      const saved = localStorage.getItem('ucab_last_invoice');
+      if (saved) {
+        setFactura(JSON.parse(saved));
+      } else {
+        setFactura({
+          id: 'SOL-2026-9978',
+          nroTransaccion: '9978',
+          nroControl: '00-847291',
+          servicio: 'ALQUILER DE CANCHA DE FUTBOL',
+          categoria: 'Deportes',
+          sede: user?.sede || 'Montalbán',
+          fechaEjecucion: '15 DE MAYO, 4:00PM',
+          fechaEmision: '15 de mayo de 2026, 10:30 AM',
+          montoUsd: 20.0,
+          montoBs: 20.0,
+          metodoPago: 'PAGO MOVIL',
+          referencia: '12344567',
+          estatusFactura: 'PAGADA',
+        });
+      }
+    };
+
+    cargarFactura();
   }, [user]);
 
   if (!factura) return null;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 animate-fadeIn py-6">
-      
-      {/* TARJETA DE COM PROBANTE DE ÉXITO (Replicando milimétricamente Figura 6 del PDF) */}
       <div className="bg-white rounded-3xl p-8 border-2 border-emerald-500/30 shadow-xl text-center relative overflow-hidden">
-        
-        {/* Círculo decorativo superior */}
         <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner animate-bounce">
           <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
           </svg>
         </div>
 
-        {/* Encabezados Figura 6 */}
         <span className="text-xs font-black tracking-widest text-gray-400 uppercase">UCAB-Services</span>
         <h1 className="text-2xl sm:text-3xl font-black text-gray-900 mt-1">Pago confirmado</h1>
-        <p className="text-base font-bold text-ucab-green mt-1">Pago realizado con exito</p>
-        
+        <p className="text-base font-bold text-ucab-green mt-1">Pago realizado con éxito</p>
+
         <div className="mt-3 inline-block bg-gray-100 px-4 py-1.5 rounded-full border border-gray-200">
           <span className="text-sm font-extrabold text-gray-800">NÚMERO DE TRANSACCIÓN ({factura.nroTransaccion})</span>
         </div>
 
-        {/* DESGLOSE FORMAL DE LA FACTURA INSTITUCIONAL (Valor agregado técnico ERE) */}
         <div className="mt-8 pt-6 border-t border-dashed border-gray-200 text-left space-y-4">
-          
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-bold text-gray-400 uppercase">FACTURA FISCAL INSTITUCIONAL</p>
               <p className="text-sm font-black text-ucab-green">Nro. Control: {factura.nroControl}</p>
             </div>
-            <Badge label={factura.estatusFactura} status="success" size="md" />
+            <Badge label={factura.estatusFactura} status={factura.estatusFactura === 'PAGADA' ? 'success' : 'warning'} size="md" />
           </div>
 
           <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-200/60 text-xs">
@@ -85,7 +105,6 @@ export default function InvoiceView() {
             </div>
           </div>
 
-          {/* Tabla de Conceptos / Líneas de Cargo */}
           <div className="border border-gray-200 rounded-xl overflow-hidden text-xs">
             <div className="bg-gray-100 px-4 py-2 font-bold text-gray-700 flex justify-between">
               <span>DESCRIPCIÓN DEL TRÁMITE / SERVICIO</span>
@@ -113,30 +132,15 @@ export default function InvoiceView() {
           </p>
         </div>
 
-        {/* BOTONES DE ACCIÓN (Referencia Figura 6: "Volver al inicio") */}
         <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => window.print()}
-            className="w-full sm:w-auto font-semibold"
-          >
+          <Button type="button" variant="secondary" onClick={() => window.print()} className="w-full sm:w-auto font-semibold">
             🖨️ Imprimir / Guardar PDF
           </Button>
-          
-          <Button
-            type="button"
-            variant="primary"
-            size="lg"
-            onClick={() => navigate('/dashboard')}
-            className="w-full sm:w-auto font-black shadow-lg px-8"
-          >
+          <Button type="button" variant="primary" size="lg" onClick={() => navigate('/dashboard')} className="w-full sm:w-auto font-black shadow-lg px-8">
             Volver al inicio
           </Button>
         </div>
-
       </div>
-
     </div>
   );
 }
