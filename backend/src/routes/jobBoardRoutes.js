@@ -5,12 +5,15 @@ const {
     closeVacante,
     getSmartSuggestions,
     applyToVacante,
-    getInsertionReport
+    getInsertionReport,
+    getVacantes
 } = require('../controllers/jobBoardController');
 
 const { authenticateToken, authorizeRoles } = require('../middlewares/authMiddleware');
 
 router.use(authenticateToken);
+
+router.get('/vacantes', getVacantes);
 
 // HU-24 & HU-26: Publicación y métricas
 router.post('/vacantes', authorizeRoles('Admin', 'Personal_Administrativo'), createVacante);

@@ -1,17 +1,27 @@
 const { pool } = require('../config/db');
 
 /**
- * Función auxiliar para calcular edad exacta en años
+ * Función auxiliar para calcular edad exacta en años.
+ * `fechaReferencia` permite determinismo en pruebas.
  */
-const calcularEdad = (fechaNacimiento) => {
-    const hoy = new Date();
+const calcularEdad = (fechaNacimiento, fechaReferencia = new Date()) => {
     const nac = new Date(fechaNacimiento);
-    let edad = hoy.getFullYear() - nac.getFullYear();
-    const mes = hoy.getMonth() - nac.getMonth();
-    if (mes < 0 || (mes === 0 && hoy.getDate() < nac.getDate())) {
+    let edad = fechaReferencia.getFullYear() - nac.getFullYear();
+    const mes = fechaReferencia.getMonth() - nac.getMonth();
+    if (mes < 0 || (mes === 0 && fechaReferencia.getDate() < nac.getDate())) {
         edad--;
     }
     return edad;
+};
+
+const clasificarBeneficiario = (fechaNacimiento, constanciaEstudios, fechaReferencia = new Date()) => {
+    const edad = calcularEdad(fechaNacimiento, fechaReferencia);
+    const esMayor = edad >= 18;
+
+    return {
+        tipo_carga: esMayor ? 'Carga_mayor' : 'Carga_menor',
+        beneficios_activos: esMayor ? Boolean(constanciaEstudios) : true
+    };
 };
 
 /**
@@ -52,14 +62,7 @@ const registerBeneficiary = async (req, res, next) => {
         }
 
         // 2. Determinar edad y lógica de beneficios
-        const edad = calcularEdad(fecha_nacimiento);
-        const esMayor = edad >= 18;
-
-        // Si es mayor y no aporta constancia, los beneficios nacen inactivos (HU-10)
-        let beneficios_activos = true;
-        if (esMayor && !constancia_estudios) {
-            beneficios_activos = false;
-        }
+        const { tipo_carga, beneficios_activos } = clasificarBeneficiario(fecha_nacimiento, constancia_estudios);
 
         // 3. Insertar en tabla fuerte: Beneficiario
         const insertBeneficiarioQuery = `
@@ -76,7 +79,7 @@ const registerBeneficiary = async (req, res, next) => {
 
         // 4. Bifurcación transaccional según la edad (Regla R-20)
         let subtipoRes;
-        if (esMayor) {
+        if (tipo_carga === 'Carga_mayor') {
             const insertCargaMayor = `
                 INSERT INTO Carga_mayor (cedula_beneficiario, constancia_estudios, certificado_solteria)
                 VALUES ($1, $2, $3) RETURNING *;
@@ -95,13 +98,14 @@ const registerBeneficiary = async (req, res, next) => {
         }
 
         await client.query('COMMIT');
+        const esMayor = tipo_carga === 'Carga_mayor';
 
         res.status(201).json({
             success: true,
             message: 'Beneficiario registrado exitosamente.',
             data: {
                 ...beneficiarioRes.rows[0],
-                tipo_carga: esMayor ? 'Carga_mayor' : 'Carga_menor',
+                tipo_carga,
                 detalle_carga: subtipoRes.rows[0]
             }
         });
@@ -162,22 +166,67 @@ const getMyBeneficiaries = async (req, res, next) => {
  * @route   POST /api/beneficiarios/evaluar-mayoría-edad
  * @access  Private (Admin / Sistema)
  */
-const evaluateAgeTransitions = async (req, res, next) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
+const ejecutarTransicionMayorEdad = async (client = null) => {
+    const ownClient = client || await pool.connect();
+    const debeLiberar = client === null;
+    let debeCerrarTransaccion = false;
 
-        // 1. Detectar beneficiarios en Carga_menor que ya tienen 18 años o más
+    try {
+        if (!client) {
+            await ownClient.query('BEGIN');
+            debeCerrarTransaccion = true;
+        }
+
         const queryDetect = `
             SELECT b.cedula_beneficiario, b.nombres, b.apellidos
             FROM Beneficiario b
             JOIN Carga_menor cm ON b.cedula_beneficiario = cm.cedula_beneficiario
             WHERE EXTRACT(YEAR FROM AGE(CURRENT_DATE, b.fecha_nacimiento)) >= 18;
         `;
-        const { rows: candidatos } = await client.query(queryDetect);
+        const { rows: candidatos } = await ownClient.query(queryDetect);
 
         if (candidatos.length === 0) {
-            await client.query('ROLLBACK');
+            if (debeCerrarTransaccion) {
+                await ownClient.query('ROLLBACK');
+            }
+            return { migrados: [] };
+        }
+
+        const migrados = [];
+
+        for (const cand of candidatos) {
+            await ownClient.query(`DELETE FROM Carga_menor WHERE cedula_beneficiario = $1`, [cand.cedula_beneficiario]);
+            await ownClient.query(`INSERT INTO Carga_mayor (cedula_beneficiario, constancia_estudios, certificado_solteria)
+                 VALUES ($1, NULL, NULL)`, [cand.cedula_beneficiario]);
+            await ownClient.query(`UPDATE Beneficiario 
+                 SET beneficios_activos = false 
+                 WHERE cedula_beneficiario = $1`, [cand.cedula_beneficiario]);
+            migrados.push({ cedula: cand.cedula_beneficiario, nombre: `${cand.nombres} ${cand.apellidos}` });
+        }
+
+        if (debeCerrarTransaccion) {
+            await ownClient.query('COMMIT');
+        }
+
+        return { migrados };
+    } catch (error) {
+        if (debeCerrarTransaccion) {
+            await ownClient.query('ROLLBACK');
+        }
+        throw error;
+    } finally {
+        if (debeLiberar) {
+            ownClient.release();
+        }
+    }
+};
+
+const evaluateAgeTransitions = async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+        const result = await ejecutarTransicionMayorEdad(client);
+
+        if (result.migrados.length === 0) {
             return res.status(200).json({
                 success: true,
                 message: 'No se detectaron beneficiarios pendientes por transición de mayoría de edad.',
@@ -185,44 +234,12 @@ const evaluateAgeTransitions = async (req, res, next) => {
             });
         }
 
-        const migrados = [];
-
-        // 2. Procesar la transición para cada candidato de forma atómica
-        for (const cand of candidatos) {
-            // Eliminar de carga menor
-            await client.query(
-                `DELETE FROM Carga_menor WHERE cedula_beneficiario = $1`,
-                [cand.cedula_beneficiario]
-            );
-
-            // Insertar en carga mayor exigiendo constancia (nulos temporalmente)
-            await client.query(
-                `INSERT INTO Carga_mayor (cedula_beneficiario, constancia_estudios, certificado_solteria)
-                 VALUES ($1, NULL, NULL)`,
-                [cand.cedula_beneficiario]
-            );
-
-            // Suspender beneficios según HU-10 hasta que suban constancia universitaria
-            await client.query(
-                `UPDATE Beneficiario 
-                 SET beneficios_activos = false 
-                 WHERE cedula_beneficiario = $1`,
-                [cand.cedula_beneficiario]
-            );
-
-            migrados.push({ cedula: cand.cedula_beneficiario, nombre: `${cand.nombres} ${cand.apellidos}` });
-        }
-
-        await client.query('COMMIT');
-
         res.status(200).json({
             success: true,
-            message: `Se ha procesado la transición de mayoría de edad para ${migrados.length} beneficiario(s). Sus beneficios han sido suspendidos temporalmente hasta consignar constancia de estudios.`,
-            migrados
+            message: `Se ha procesado la transición de mayoría de edad para ${result.migrados.length} beneficiario(s). Sus beneficios han sido suspendidos temporalmente hasta consignar constancia de estudios.`,
+            migrados: result.migrados
         });
-
     } catch (error) {
-        await client.query('ROLLBACK');
         next(error);
     } finally {
         client.release();
@@ -300,9 +317,56 @@ const uploadConstanciaEstudios = async (req, res, next) => {
     }
 };
 
+const getAllBeneficiaries = async (req, res, next) => {
+    try {
+        const query = `
+            SELECT 
+                b.*, 
+                CASE 
+                    WHEN cma.cedula_beneficiario IS NOT NULL THEN 'Carga_mayor'
+                    WHEN cme.cedula_beneficiario IS NOT NULL THEN 'Carga_menor'
+                END AS tipo_carga,
+                cme.esquema_vacunacion,
+                cme.centro_educacion_inicial,
+                cma.constancia_estudios,
+                cma.certificado_solteria
+            FROM Beneficiario b
+            LEFT JOIN Carga_menor cme ON b.cedula_beneficiario = cme.cedula_beneficiario
+            LEFT JOIN Carga_mayor cma ON b.cedula_beneficiario = cma.cedula_beneficiario;
+        `;
+
+        const { rows } = await pool.query(query);
+
+        const stats = rows.reduce(
+            (acc, item) => {
+                acc.total += 1;
+                if (item.beneficios_activos) acc.activos += 1;
+                else acc.inactivos += 1;
+                if (item.tipo_carga === 'Carga_mayor') acc.cargaMayor += 1;
+                if (item.tipo_carga === 'Carga_menor') acc.cargaMenor += 1;
+                return acc;
+            },
+            { total: 0, activos: 0, inactivos: 0, cargaMayor: 0, cargaMenor: 0 }
+        );
+
+        res.status(200).json({
+            success: true,
+            count: rows.length,
+            stats,
+            data: rows
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     registerBeneficiary,
     getMyBeneficiaries,
+    getAllBeneficiaries,
     evaluateAgeTransitions,
-    uploadConstanciaEstudios
+    uploadConstanciaEstudios,
+    calcularEdad,
+    clasificarBeneficiario,
+    ejecutarTransicionMayorEdad
 };

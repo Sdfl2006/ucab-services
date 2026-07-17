@@ -1,44 +1,116 @@
 import React, { useState, useEffect } from 'react';
-import { reportService } from '../services/reportService';
+import beneficiaryService from '../services/beneficiaryService';
 import { useAuth } from '../context/AuthContext';
 import Card from '../components/common/Card';
-import DataTable from '../components/table/datatable';
+import DataTable from '../components/table/DataTable';
 import Button from '../components/common/Button';
+import Badge from '../components/common/Badge';
 import { useNavigate } from 'react-router-dom';
 
 const Dashboard = () => {
   const { user, hasAnyRole } = useAuth();
   const navigate = useNavigate();
-  const esPersonalOperativo = hasAnyRole('Admin', 'Personal_Administrativo');
-  
-  const [ingresosData, setIngresosData] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
 
+  const esAdmin = hasAnyRole('Admin');
+  const esPersonalAdministrativo = hasAnyRole('Personal_Administrativo');
+  const esPersonalOperativo = esAdmin || esPersonalAdministrativo;
+  const esProfesor = hasAnyRole('Profesor');
+
+  // Estados para Administradores
+  const [beneficiaryStats, setBeneficiaryStats] = useState(null);
+  const [beneficiariosList, setBeneficiariosList] = useState([]);
+  const [isLoadingBeneficiaryStats, setIsLoadingBeneficiaryStats] = useState(false);
+  const [beneficiaryError, setBeneficiaryError] = useState(null);
+
+  // Estados para Profesores
+  const [profesorBeneficiarios, setProfesorBeneficiarios] = useState([]);
+  const [isLoadingProfesorBeneficiarios, setIsLoadingProfesorBeneficiarios] = useState(false);
+
+  // Cargar datos si es Admin o Personal Administrativo
   useEffect(() => {
-    // Solo cargamos los reportes si el usuario tiene rol administrativo
     if (esPersonalOperativo) {
-      const fetchReportes = async () => {
+      const fetchBeneficiaryStats = async () => {
         try {
-          setIsLoading(true);
-          const ingresos = await reportService.getIngresos();
-          setIngresosData(ingresos);
+          setIsLoadingBeneficiaryStats(true);
+          const adminData = await beneficiaryService.listarBeneficiariosAdmin();
+          setBeneficiaryStats(adminData.stats || {
+            total: 0,
+            activos: 0,
+            inactivos: 0,
+            cargaMayor: 0,
+            cargaMenor: 0,
+          });
+          setBeneficiariosList(adminData.data || []);
         } catch (error) {
-          console.error("Error al cargar los reportes:", error);
+          setBeneficiaryError(error.friendlyMessage || 'No se pudieron cargar los datos de beneficiarios.');
         } finally {
-          setIsLoading(false);
+          setIsLoadingBeneficiaryStats(false);
         }
       };
-      fetchReportes();
+      fetchBeneficiaryStats();
     }
   }, [esPersonalOperativo]);
 
-  const columnasIngresos = [
-    { header: 'Sede', accessorKey: 'sede' },
-    { header: 'Categoría', accessorKey: 'categoria' },
-    { header: 'Servicio', accessorKey: 'servicio' },
-    { header: 'Facturado ($)', accessorKey: 'total_facturado' },
-    { header: 'Cobrado ($)', accessorKey: 'total_cobrado' },
-    { header: 'Saldo Pendiente', accessorKey: 'saldo_por_cobrar' }
+  // Cargar datos si es Profesor
+  useEffect(() => {
+    if (esProfesor) {
+      const fetchProfesorBeneficiarios = async () => {
+        try {
+          setIsLoadingProfesorBeneficiarios(true);
+          const data = await beneficiaryService.listarMisBeneficiarios();
+          setProfesorBeneficiarios(data);
+        } catch (error) {
+          console.error('Error al cargar los beneficiarios del profesor:', error);
+        } finally {
+          setIsLoadingProfesorBeneficiarios(false);
+        }
+      };
+      fetchProfesorBeneficiarios();
+    }
+  }, [esProfesor]);
+
+  const columnasBeneficiariosAdmin = [
+    {
+      key: 'titular',
+      label: 'C.I. Titular',
+      sortable: true,
+      render: (row) => <span className="font-mono text-gray-500">{row.cedula_titular}</span>
+    },
+    {
+      key: 'nombres',
+      label: 'Beneficiario',
+      sortable: true,
+      render: (row) => (
+        <div>
+          <p className="font-bold text-gray-900">{row.nombres} {row.apellidos}</p>
+          <span className="text-[11px] text-gray-500 font-mono">CI: {row.cedula_beneficiario}</span>
+        </div>
+      )
+    },
+    {
+      key: 'parentesco',
+      label: 'Parentesco',
+      sortable: true,
+      render: (row) => <span className="capitalize text-gray-700">{row.parentesco}</span>
+    },
+    {
+      key: 'tipo_carga',
+      label: 'Tipo de Carga',
+      sortable: true,
+      render: (row) => <span className="text-gray-700 font-medium">{row.tipo_carga?.replace('_', ' ')}</span>
+    },
+    {
+      key: 'beneficios_activos',
+      label: 'Estado',
+      sortable: true,
+      render: (row) => (
+        <Badge
+          label={row.beneficios_activos ? 'Activos' : 'Inactivos'}
+          status={row.beneficios_activos ? 'success' : 'warning'}
+          size="sm"
+        />
+      )
+    }
   ];
 
   return (
@@ -49,27 +121,87 @@ const Dashboard = () => {
       <p className="text-sm text-gray-500 mb-6">
         Plataforma integrada de gestión de servicios.
       </p>
-      
-      {/* VISTA PARA ADMINISTRADORES */}
+
       {esPersonalOperativo ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            <Card title="Total Ingresos" value="Cargando..." />
-            <Card title="Trámites Pendientes" value="Cargando..." />
-            <Card title="Alertas de Seguridad" value="Cargando..." />
+          {/* Tarjetas Superiores para Admin */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <Card className="border-l-4 border-l-ucab-blue">
+              <p className="text-xs font-bold text-gray-500 uppercase">Total Beneficiarios</p>
+              <p className="text-2xl font-black text-gray-800 mt-1">{beneficiaryStats?.total ?? '0'}</p>
+            </Card>
+            <Card className="border-l-4 border-l-emerald-500">
+              <p className="text-xs font-bold text-gray-500 uppercase">Beneficios Activos</p>
+              <p className="text-2xl font-black text-emerald-600 mt-1">{beneficiaryStats?.activos ?? '0'}</p>
+            </Card>
+            <Card className="border-l-4 border-l-amber-500">
+              <p className="text-xs font-bold text-gray-500 uppercase">Beneficios Inactivos</p>
+              <p className="text-2xl font-black text-amber-600 mt-1">{beneficiaryStats?.inactivos ?? '0'}</p>
+            </Card>
+            <Card className="border-l-4 border-l-purple-500">
+              <p className="text-xs font-bold text-gray-500 uppercase">Cargas Mayores</p>
+              <p className="text-2xl font-black text-purple-600 mt-1">{beneficiaryStats?.cargaMayor ?? '0'}</p>
+            </Card>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-4 border border-gray-200">
-            <h2 className="text-xl font-semibold mb-4 text-gray-800">Ingresos por Sede y Categoría (HU-35)</h2>
-            {isLoading ? (
-              <p className="text-sm text-gray-500">Cargando datos financieros...</p>
+          {/* Tabla General de Beneficiarios */}
+          <Card title="Directorio General de Beneficiarios" subtitle="Listado administrativo de cargas familiares registradas (HU-09 / HU-10)">
+            {isLoadingBeneficiaryStats ? (
+              <p className="text-sm text-gray-500 py-4 text-center">Cargando directorio de beneficiarios...</p>
+            ) : beneficiaryError ? (
+              <p className="text-sm text-red-600 p-4 bg-red-50 rounded-lg">{beneficiaryError}</p>
             ) : (
-              <DataTable columns={columnasIngresos} data={ingresosData} />
+              <DataTable 
+                columns={columnasBeneficiariosAdmin} 
+                data={beneficiariosList} 
+                searchableColumns={['nombres', 'apellidos', 'cedula_beneficiario', 'cedula_titular']}
+                initialPageSize={5}
+                emptyMessage="No hay beneficiarios registrados en el sistema."
+              />
             )}
-          </div>
+          </Card>
         </>
+      ) : esProfesor ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card title="Panel de Docente" subtitle="Gestión de cargas familiares y servicios académicos">
+            <div className="space-y-4 text-sm text-gray-700 mt-2">
+              <p>Accede a tus beneficiarios, controla sus documentos universitarios y verifica estados de cobertura (HU-09).</p>
+              <div className="flex flex-col gap-3 mt-4">
+                <Button onClick={() => navigate('/perfil')} variant="primary" className="w-full justify-start">
+                  Ver mi panel de beneficiarios
+                </Button>
+                <Button onClick={() => navigate('/solicitudes')} variant="secondary" className="w-full justify-start">
+                  Mis solicitudes de servicio
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="Mis Beneficiarios Registrados">
+            {isLoadingProfesorBeneficiarios ? (
+              <p className="text-sm text-gray-500">Cargando beneficiarios...</p>
+            ) : profesorBeneficiarios.length === 0 ? (
+              <p className="text-sm text-gray-400 py-4">No tienes cargas familiares registradas actualmente.</p>
+            ) : (
+              <div className="grid gap-3 mt-2">
+                {profesorBeneficiarios.slice(0, 4).map((benef) => (
+                  <div key={benef.cedula_beneficiario} className="p-3.5 bg-gray-50 rounded-xl border border-gray-200 flex justify-between items-center">
+                    <div>
+                      <p className="font-bold text-gray-800">{benef.nombres} {benef.apellidos}</p>
+                      <p className="text-[11px] text-gray-500 uppercase">{benef.parentesco} • {benef.tipo_carga?.replace('_', ' ')}</p>
+                    </div>
+                    <Badge 
+                      label={benef.beneficios_activos ? 'Activos' : 'Inactivos'} 
+                      status={benef.beneficios_activos ? 'success' : 'warning'} 
+                      size="sm" 
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
       ) : (
-        /* VISTA PARA ESTUDIANTES Y PROFESORES */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card title="Accesos Rápidos" subtitle="Servicios más utilizados">
             <div className="flex flex-col gap-3 mt-4">
@@ -77,20 +209,12 @@ const Dashboard = () => {
                 + Nueva Solicitud de Servicio
               </Button>
               <Button onClick={() => navigate('/directorio-medico')} variant="secondary" className="w-full justify-start">
-                🩺 Directorio Médico
+                Directorio Médico
               </Button>
               <Button onClick={() => navigate('/pagos')} variant="secondary" className="w-full justify-start">
-                💳 Mis Facturas y Pagos
+                Mis Facturas y Pagos
               </Button>
             </div>
-          </Card>
-          
-          <Card title="Billetera TAI" subtitle="Estado de cuenta virtual">
-             <div className="bg-gradient-to-r from-ucab-blue to-ucab-green p-6 rounded-xl text-white mt-4">
-                <p className="text-xs font-semibold opacity-80 uppercase tracking-widest mb-1">Saldo Disponible</p>
-                {/* Se reemplaza el "$0.00 USD" estático por el saldo real del usuario */}
-                <p className="text-3xl font-black">${Number(user?.saldo || 0).toFixed(2)} USD</p>
-             </div>
           </Card>
         </div>
       )}

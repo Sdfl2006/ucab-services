@@ -5,6 +5,16 @@ const { pool } = require('../config/db');
  * @route POST /api/v1/bolsa-trabajo/vacantes 
  * @access Private (Admin, Personal_Administrativo) 
  */ 
+
+const getVacantes = async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM Vacante ORDER BY fecha_oferta DESC`);
+    res.status(200).json({ success: true, data: rows });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const createVacante = async (req, res, next) => { 
   try { 
     const { nombre_entidad, cargo, fecha_oferta, responsabilidades, beneficios, perfil_buscado } = req.body; 
@@ -178,5 +188,6 @@ module.exports = {
   closeVacante, 
   getSmartSuggestions, 
   applyToVacante, 
-  getInsertionReport 
+  getInsertionReport,
+  getVacantes
 };

@@ -16,6 +16,15 @@ async function listarMisBeneficiarios() {
   }
 }
 
+async function listarBeneficiariosAdmin() {
+  try {
+    const response = await api.get(`${BASE_URL}`);
+    return response.data;
+  } catch (error) {
+    throw normalizeError(error);
+  }
+}
+
 async function subirConstanciaEstudios(cedula, payload) {
   try {
     const response = await api.put(`${BASE_URL}/${cedula}/constancia`, payload);
@@ -27,5 +36,6 @@ async function subirConstanciaEstudios(cedula, payload) {
 
 export default {
   listarMisBeneficiarios,
+  listarBeneficiariosAdmin,
   subirConstanciaEstudios,
 };
